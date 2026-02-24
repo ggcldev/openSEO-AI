@@ -1,58 +1,67 @@
 # openSEO AI
 
-Open-source web scraping tool with AI-powered agents. Scrape any page, extract structured data, and get AI summaries — all from a clean dashboard.
+Open-source AI-powered SEO on-page optimization tool. Analyze any page against top SERP competitors and get actionable recommendations — title tags, meta descriptions, headings, keyword density, content gaps, and prioritized fixes.
+
+## How It Works
+
+1. **Enter your URL** + optional primary keyword
+2. **SERP analysis** — fetches top 10 Google results for your keyword
+3. **Page scraping** — scrapes your page + all competitors using Scrapling + Playwright
+4. **Content analysis** — keyword density, word count, heading structure, entity extraction
+5. **AI audit** — Groq/Claude agent produces a full on-page SEO audit with scored metrics and prioritized recommendations
+6. **Dashboard** — view results, scores, gaps, and specific actions to take
 
 ## Features
 
-- **Stealth Scraping** — Scrapling + Playwright for adaptive, bot-resistant page fetching
-- **AI Agents** — Pluggable agent system (summarize, extract, raw) with OpenAI/Ollama support
-- **Job History** — SQLite-backed history with filters by status, agent, URL, and date
-- **Async Processing** — Background job processing with real-time status updates
-- **Modern Dashboard** — Next.js + Tailwind CSS frontend with dark theme
-- **No Auth Required** — Simple setup, no authentication overhead
+- Full on-page SEO audit (title, meta, H1/H2, keyword density, word count, content gaps)
+- SERP top-10 competitor analysis
+- Stealth scraping with Scrapling + Playwright
+- AI-powered recommendations via Groq (free) or Claude
+- Job history with filters and auto-refresh
+- Modern dark-theme dashboard
+- No authentication required
+- 100% open-source (MIT)
 
 ## Tech Stack
 
-| Layer | Tech | Notes |
-|-------|------|-------|
-| Backend | FastAPI (Python) | Async-first, auto-generated API docs |
-| Scraping | Scrapling + Playwright | Adaptive scraping, stealth headers |
-| AI Agents | Python + OpenAI / Ollama | Runs inside backend tasks |
-| Database | SQLite | No server needed, zero config |
-| ORM | SQLAlchemy 2.x | Type-safe models |
-| Frontend | Next.js + TypeScript | Modern, type-safe dashboard |
-| Styling | Tailwind CSS | Utility-first, dark theme |
-| License | MIT | Fully open-source |
+| Layer | Tech |
+|-------|------|
+| Backend | FastAPI (Python) |
+| Scraping | Scrapling + Playwright |
+| AI Agent | LangChain + Groq / Claude |
+| NLP | YAKE (keyword extraction) |
+| Database | SQLite + SQLAlchemy |
+| Frontend | Next.js + TypeScript |
+| Styling | Tailwind CSS |
 
 ## Project Structure
 
 ```
 openSEO-AI/
 ├── backend/
-│   ├── main.py                    # FastAPI app + routes
-│   ├── database.py                # SQLite session + setup
+│   ├── main.py                    # FastAPI app
+│   ├── config.py                  # LLM factory (Groq/Claude)
+│   ├── database.py                # SQLite setup
 │   ├── routes/
-│   │   ├── scrape.py              # POST /api/scrape
+│   │   ├── optimize.py            # POST /api/optimize
 │   │   └── history.py             # GET /api/history
-│   ├── scrapling_core/
-│   │   ├── engine.py              # Scrapling + Playwright + agents
-│   │   └── models.py              # SQLAlchemy models
-│   └── requirements.txt
+│   └── scrapling_core/
+│       ├── engine.py              # Scrapling + Playwright scraper
+│       ├── serp.py                # Google SERP fetcher
+│       ├── analyzer.py            # Keyword + content analysis
+│       ├── seo_agent.py           # AI audit agent
+│       └── models.py              # SQLAlchemy models
 │
 ├── frontend/
 │   ├── app/
-│   │   ├── layout.tsx             # Root layout
 │   │   ├── page.tsx               # Landing page
-│   │   └── dashboard/page.tsx     # Main dashboard
+│   │   └── dashboard/page.tsx     # SEO dashboard
 │   ├── components/
-│   │   └── TableResults.tsx       # Results table
-│   ├── lib/
-│   │   └── apiClient.ts           # API client
-│   ├── types.ts                   # TypeScript interfaces
-│   ├── tailwind.config.ts
-│   └── package.json
+│   │   └── TableResults.tsx       # Audit results table
+│   ├── lib/apiClient.ts           # API client
+│   └── types.ts                   # TypeScript types
 │
-├── LICENSE
+├── LICENSE (MIT)
 └── README.md
 ```
 
@@ -62,123 +71,76 @@ openSEO-AI/
 
 - Python 3.11+
 - Node.js 18+
-- npm or yarn
+- Groq API key (free at [console.groq.com](https://console.groq.com))
 
-### Backend Setup
+### Backend
 
 ```bash
 cd backend
-
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Install Playwright browsers
 playwright install chromium
 
-# Start the API server
+# Set your API key
+export GROQ_API_KEY="gsk_..."
+
+# Start the server
 uvicorn main:app --reload --port 8000
 ```
 
-The API will be available at `http://localhost:8000` with interactive docs at `http://localhost:8000/docs`.
+API docs at `http://localhost:8000/docs`
 
-### Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start dev server
 npm run dev
 ```
 
-The dashboard will be available at `http://localhost:3000`.
+Dashboard at `http://localhost:3000`
 
 ## API Reference
 
-### `POST /api/scrape`
-
-Submit a new scrape job.
-
-**Request body:**
+### `POST /api/optimize`
 
 ```json
 {
-  "url": "https://example.com",
-  "agent": "summarize",
-  "config": {}
-}
-```
-
-**Agent types:**
-
-| Agent | Description |
-|-------|-------------|
-| `summarize` | Returns title, headings, word count, and a 200-word snippet |
-| `extract` | Returns all structured data including full body text |
-| `raw` | Returns the raw scraped data as-is |
-
-**Response:**
-
-```json
-{
-  "id": 1,
-  "url": "https://example.com",
-  "agent": "summarize",
-  "status": "pending",
-  "message": "Scrape job submitted. Check /api/history for results."
+  "url": "https://yoursite.com/page",
+  "keyword": "best seo tools",
+  "num_competitors": 10
 }
 ```
 
 ### `GET /api/history`
 
-List past scrape jobs with optional filters.
+Query params: `status`, `keyword`, `url`, `limit`
 
-**Query parameters:**
+### `GET /api/history/{id}`
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `status` | string | Filter by: `pending`, `running`, `done`, `failed` |
-| `agent` | string | Filter by agent type |
-| `url` | string | Filter by URL (partial match) |
-| `limit` | int | Max results (default: 50, max: 200) |
+Get a single job with full audit results.
 
-### `GET /api/history/{job_id}`
+## Switching to Claude
 
-Get a single scrape job by ID.
+```bash
+# Install the package
+pip install langchain-anthropic
 
-## How It Works
-
-1. **User opens dashboard** — Next.js loads and fetches job history via `GET /api/history`
-2. **User submits a scrape** — `POST /api/scrape` creates a job in SQLite (status: `pending`)
-3. **Backend processes** — Scrapling + Playwright fetches the page, AI agent processes content
-4. **Job completes** — Status updates to `done` (or `failed`), results stored in SQLite
-5. **Dashboard updates** — User can view results, re-run, filter, and export
-
-## Contributing
-
-Contributions are welcome! Here's how:
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Commit your changes (`git commit -m 'Add my feature'`)
-4. Push to the branch (`git push origin feature/my-feature`)
-5. Open a Pull Request
+# Set env vars
+export LLM_PROVIDER=claude
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
 
 ## Roadmap
 
-- [ ] OpenAI / Ollama integration for AI-powered summaries
-- [ ] Scheduled / recurring scrape jobs
-- [ ] Export results (CSV, JSON)
-- [ ] Docker Compose for one-command setup
-- [ ] Rate limiting and job queue (Redis)
-- [ ] Authentication (optional)
+- [ ] Scheduled / recurring audits
+- [ ] Export results (CSV, JSON, PDF)
+- [ ] Docker Compose setup
+- [ ] SerpAPI integration (production SERP)
+- [ ] Multi-page site audit
+- [ ] Historical score tracking
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE)

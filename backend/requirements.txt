@@ -4,4 +4,8 @@ scrapling
 playwright
 sqlalchemy
 pydantic
-openai
+googlesearch-python
+langchain-core
+langchain-groq
+# langchain-anthropic   # uncomment when switching to Claude
+yake

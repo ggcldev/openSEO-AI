@@ -1,6 +1,6 @@
 """
 openSEO AI — FastAPI Backend
-Async-first API for web scraping with AI agent processing.
+SEO on-page optimization API powered by Scrapling + AI agents.
 """
 from contextlib import asynccontextmanager
 
@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import init_db
-from routes.scrape import router as scrape_router
+from routes.optimize import router as optimize_router
 from routes.history import router as history_router
 
 
@@ -21,12 +21,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="openSEO AI",
-    description="Open-source web scraping + AI agent API",
+    description="Open-source SEO on-page optimization API",
     version="0.1.0",
     lifespan=lifespan,
 )
 
-# CORS — allow Next.js frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -35,8 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routes
-app.include_router(scrape_router, prefix="/api")
+app.include_router(optimize_router, prefix="/api")
 app.include_router(history_router, prefix="/api")
 
 

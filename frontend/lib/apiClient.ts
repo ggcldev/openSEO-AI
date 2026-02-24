@@ -1,4 +1,4 @@
-import { ScrapeRequest, ScrapeResponse, HistoryItem, HistoryFilters } from "@/types";
+import type { OptimizeRequest, OptimizeResponse, HistoryItem, HistoryFilters } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -16,8 +16,8 @@ async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export async function submitScrape(data: ScrapeRequest): Promise<ScrapeResponse> {
-  return fetchAPI<ScrapeResponse>("/api/scrape", {
+export async function submitOptimization(data: OptimizeRequest): Promise<OptimizeResponse> {
+  return fetchAPI<OptimizeResponse>("/api/optimize", {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -26,7 +26,7 @@ export async function submitScrape(data: ScrapeRequest): Promise<ScrapeResponse>
 export async function getHistory(filters?: HistoryFilters): Promise<HistoryItem[]> {
   const params = new URLSearchParams();
   if (filters?.status) params.set("status", filters.status);
-  if (filters?.agent) params.set("agent", filters.agent);
+  if (filters?.keyword) params.set("keyword", filters.keyword);
   if (filters?.url) params.set("url", filters.url);
   if (filters?.limit) params.set("limit", String(filters.limit));
 

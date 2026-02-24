@@ -7,16 +7,15 @@ export default function Home() {
         openSEO <span className="text-blue-400">AI</span>
       </h1>
       <p className="text-gray-400 text-lg max-w-xl mb-8">
-        Open-source web scraping tool with AI-powered agents. Scrape any page,
-        extract structured data, and get AI summaries — all from a clean
-        dashboard.
+        Open-source AI-powered SEO optimization tool. Analyze any page against
+        top SERP competitors and get actionable on-page recommendations.
       </p>
       <div className="flex gap-4">
         <Link
           href="/dashboard"
           className="bg-blue-500 hover:bg-blue-600 text-white font-medium px-6 py-3 rounded-lg transition"
         >
-          Open Dashboard
+          Start Optimizing
         </Link>
         <a
           href="https://github.com/ggcldev/openSEO-AI"
@@ -30,22 +29,24 @@ export default function Home() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-16 w-full max-w-3xl">
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-          <h3 className="text-white font-semibold mb-2">Stealth Scraping</h3>
+          <h3 className="text-white font-semibold mb-2">SERP Analysis</h3>
           <p className="text-gray-400 text-sm">
-            Scrapling + Playwright for adaptive, bot-resistant page fetching.
+            Automatically fetches top 10 Google results and compares your page
+            against the competition.
           </p>
         </div>
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-          <h3 className="text-white font-semibold mb-2">AI Agents</h3>
+          <h3 className="text-white font-semibold mb-2">AI-Powered Audit</h3>
           <p className="text-gray-400 text-sm">
-            Summarize, extract, or process scraped content with pluggable AI
-            agents.
+            Full on-page SEO audit: title tags, meta, headings, keyword usage,
+            content gaps, and recommendations.
           </p>
         </div>
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-          <h3 className="text-white font-semibold mb-2">Job History</h3>
+          <h3 className="text-white font-semibold mb-2">Actionable Results</h3>
           <p className="text-gray-400 text-sm">
-            SQLite-backed history with filters by status, agent, URL, and date.
+            Prioritized recommendations with specific actions — not vague
+            suggestions, but exactly what to change and where.
           </p>
         </div>
       </div>
