@@ -19,6 +19,7 @@ export interface HistoryItem {
   status: "pending" | "running" | "done" | "failed";
   audit_result: string | null;
   competitor_urls: string | null;
+  has_export: boolean;
   created_at: string;
   finished_at: string | null;
 }

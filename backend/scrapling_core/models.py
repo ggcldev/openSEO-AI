@@ -17,6 +17,7 @@ class OptimizationJob(Base):
     num_competitors = Column(Integer, default=10)
     status = Column(String, nullable=False, default="pending", index=True)
     audit_result = Column(Text, nullable=True)
+    optimized_html = Column(Text, nullable=True)
     competitor_urls = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     finished_at = Column(DateTime, nullable=True)

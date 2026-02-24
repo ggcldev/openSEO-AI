@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
 from routes.optimize import router as optimize_router
 from routes.history import router as history_router
+from routes.export import router as export_router
 
 
 @asynccontextmanager
@@ -36,6 +37,7 @@ app.add_middleware(
 
 app.include_router(optimize_router, prefix="/api")
 app.include_router(history_router, prefix="/api")
+app.include_router(export_router, prefix="/api")
 
 
 @app.get("/")

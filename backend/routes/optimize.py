@@ -71,6 +71,7 @@ async def _run_optimization(job_id: int, url: str, keyword: str, num_competitors
 
         job.status = "done"
         job.audit_result = json.dumps(result.get("audit", {}), ensure_ascii=False)
+        job.optimized_html = result.get("optimized_html", "")
         job.competitor_urls = json.dumps(result.get("competitor_urls", []))
         job.finished_at = datetime.now(timezone.utc)
         db.commit()
@@ -92,11 +93,13 @@ def _run_pipeline(url: str, keyword: str, num_competitors: int) -> dict:
     2. Scrape user's page + competitors
     3. Analyze all pages
     4. Run AI audit agent
+    5. Run AI editor agent → optimized HTML
     """
     from scrapling_core.engine import scrape_page, scrape_pages_parallel
     from scrapling_core.serp import get_serp_urls
     from scrapling_core.analyzer import analyze_content, compute_gaps
     from scrapling_core.seo_agent import run_seo_audit
+    from scrapling_core.editor_agent import run_editor
     from config import get_llm
 
     # Step 1: SERP
@@ -125,8 +128,23 @@ def _run_pipeline(url: str, keyword: str, num_competitors: int) -> dict:
     llm = get_llm()
     audit = run_seo_audit(llm, keyword or "(no keyword specified)", your_analysis, competitor_analyses, gaps)
 
+    # Step 5: AI Editor → Optimized HTML
+    optimized_html = ""
+    if not audit.get("parse_error"):
+        try:
+            optimized_html = run_editor(
+                llm,
+                keyword=keyword or "(no keyword specified)",
+                original_text=your_page.get("body_text", ""),
+                title=your_page.get("title", ""),
+                audit=audit,
+            )
+        except Exception:
+            optimized_html = ""
+
     return {
         "audit": audit,
+        "optimized_html": optimized_html,
         "competitor_urls": competitor_urls,
         "gaps": gaps,
     }

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { HistoryItem, AuditResult } from "@/types";
+import { getExportUrl } from "@/lib/apiClient";
 
 interface TableResultsProps {
   items: HistoryItem[];
@@ -28,7 +29,7 @@ function ScoreBadge({ score }: { score: number }) {
   );
 }
 
-function AuditDetails({ audit }: { audit: AuditResult }) {
+function AuditDetails({ audit, hasExport, jobId }: { audit: AuditResult; hasExport: boolean; jobId: number }) {
   if (audit.parse_error) {
     return (
       <div className="text-sm">
@@ -40,10 +41,25 @@ function AuditDetails({ audit }: { audit: AuditResult }) {
 
   return (
     <div className="space-y-4 text-sm">
-      {/* Score */}
-      <div className="flex items-center gap-3">
-        <span className="text-gray-400">Overall Score:</span>
-        <ScoreBadge score={audit.overall_score} />
+      {/* Score + Export */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <span className="text-gray-400">Overall Score:</span>
+          <ScoreBadge score={audit.overall_score} />
+        </div>
+        {hasExport && (
+          <a
+            href={getExportUrl(jobId)}
+            download
+            onClick={(e) => e.stopPropagation()}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-4 py-1.5 rounded-lg transition inline-flex items-center gap-1.5"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Download HTML
+          </a>
+        )}
       </div>
 
       {/* Metrics Grid */}
@@ -204,7 +220,7 @@ export function TableResults({ items, onRefresh }: TableResultsProps) {
                 {expandedId === item.id && audit && (
                   <tr key={`${item.id}-details`}>
                     <td colSpan={6} className="px-6 py-4 bg-gray-800/20">
-                      <AuditDetails audit={audit} />
+                      <AuditDetails audit={audit} hasExport={item.has_export} jobId={item.id} />
                     </td>
                   </tr>
                 )}

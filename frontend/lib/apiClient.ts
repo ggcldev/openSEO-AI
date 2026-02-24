@@ -37,3 +37,7 @@ export async function getHistory(filters?: HistoryFilters): Promise<HistoryItem[
 export async function getJob(id: number): Promise<HistoryItem> {
   return fetchAPI<HistoryItem>(`/api/history/${id}`);
 }
+
+export function getExportUrl(id: number): string {
+  return `${API_BASE}/api/export/${id}`;
+}

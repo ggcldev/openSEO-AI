@@ -20,6 +20,7 @@ class HistoryItem(BaseModel):
     status: str
     audit_result: Optional[str] = None
     competitor_urls: Optional[str] = None
+    has_export: bool = False
     created_at: str
     finished_at: Optional[str] = None
 
@@ -55,6 +56,7 @@ def list_history(
             status=j.status,
             audit_result=j.audit_result,
             competitor_urls=j.competitor_urls,
+            has_export=bool(j.optimized_html),
             created_at=j.created_at.isoformat() if j.created_at else "",
             finished_at=j.finished_at.isoformat() if j.finished_at else None,
         )
@@ -76,6 +78,7 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
         status=job.status,
         audit_result=job.audit_result,
         competitor_urls=job.competitor_urls,
+        has_export=bool(job.optimized_html),
         created_at=job.created_at.isoformat() if job.created_at else "",
         finished_at=job.finished_at.isoformat() if job.finished_at else None,
     )
