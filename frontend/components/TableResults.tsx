@@ -9,22 +9,17 @@ interface TableResultsProps {
   onRefresh: () => void;
 }
 
-const statusColors: Record<string, string> = {
-  pending: "text-yellow-400",
-  running: "text-blue-400",
-  done: "text-green-400",
-  failed: "text-red-400",
+const statusLabel: Record<string, { text: string; color: string }> = {
+  pending: { text: "Pending", color: "text-[#888]" },
+  running: { text: "Running", color: "text-[#fafafa]" },
+  done: { text: "Done", color: "text-[#888]" },
+  failed: { text: "Failed", color: "text-red-400" },
 };
 
 function ScoreBadge({ score }: { score: number }) {
-  const color =
-    score >= 70 ? "bg-green-500/20 text-green-400 border-green-500/30" :
-    score >= 40 ? "bg-yellow-500/20 text-yellow-400 border-yellow-500/30" :
-    "bg-red-500/20 text-red-400 border-red-500/30";
-
   return (
-    <span className={`inline-block px-2 py-0.5 rounded border text-xs font-bold ${color}`}>
-      {score}/100
+    <span className="text-[13px] font-medium text-[#fafafa] tabular-nums">
+      {score}
     </span>
   );
 }
@@ -32,125 +27,115 @@ function ScoreBadge({ score }: { score: number }) {
 function AuditDetails({ audit, hasExport, jobId }: { audit: AuditResult; hasExport: boolean; jobId: number }) {
   if (audit.parse_error) {
     return (
-      <div className="text-sm">
-        <p className="text-yellow-400 mb-2">AI output could not be parsed. Raw output:</p>
-        <pre className="text-xs text-gray-400 whitespace-pre-wrap">{audit.raw_output}</pre>
+      <div>
+        <p className="text-[13px] text-[#888] mb-3">Could not parse AI output.</p>
+        <pre className="text-[12px] text-[#555] whitespace-pre-wrap font-mono">{audit.raw_output}</pre>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 text-sm">
-      {/* Score + Export */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-3">
-          <span className="text-gray-400">Overall Score:</span>
-          <ScoreBadge score={audit.overall_score} />
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div>
+            <p className="text-[11px] text-[#555] uppercase tracking-wider mb-1">Score</p>
+            <p className="text-[28px] font-semibold tracking-tight text-[#fafafa] leading-none">{audit.overall_score}</p>
+          </div>
         </div>
         {hasExport && (
           <a
             href={getExportUrl(jobId)}
             download
             onClick={(e) => e.stopPropagation()}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-4 py-1.5 rounded-lg transition inline-flex items-center gap-1.5"
+            className="border border-[#333] text-[#fafafa] text-[13px] font-medium px-4 py-2 rounded-lg hover:bg-[#1a1a1a] transition-colors duration-200 inline-flex items-center gap-2"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             Download HTML
           </a>
         )}
       </div>
 
-      {/* Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      {/* Metrics */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-px bg-[#222] rounded-lg overflow-hidden">
         {audit.title_tag && (
-          <div className="bg-gray-800/50 rounded p-3">
-            <div className="text-gray-400 text-xs mb-1">Title Tag</div>
-            <div className="text-white text-xs mb-1 truncate">{audit.title_tag.current}</div>
-            <div className={`text-xs ${audit.title_tag.status === "ok" ? "text-green-400" : "text-yellow-400"}`}>
-              {audit.title_tag.recommendation}
-            </div>
+          <div className="bg-[#0a0a0a] p-4">
+            <p className="text-[11px] text-[#555] uppercase tracking-wider mb-2">Title Tag</p>
+            <p className="text-[12px] text-[#fafafa] mb-1 truncate">{audit.title_tag.current}</p>
+            <p className="text-[12px] text-[#666] leading-relaxed">{audit.title_tag.recommendation}</p>
           </div>
         )}
         {audit.meta_description && (
-          <div className="bg-gray-800/50 rounded p-3">
-            <div className="text-gray-400 text-xs mb-1">Meta Description</div>
-            <div className={`text-xs ${audit.meta_description.status === "ok" ? "text-green-400" : "text-yellow-400"}`}>
-              {audit.meta_description.recommendation}
-            </div>
+          <div className="bg-[#0a0a0a] p-4">
+            <p className="text-[11px] text-[#555] uppercase tracking-wider mb-2">Meta Description</p>
+            <p className="text-[12px] text-[#666] leading-relaxed">{audit.meta_description.recommendation}</p>
           </div>
         )}
         {audit.word_count && (
-          <div className="bg-gray-800/50 rounded p-3">
-            <div className="text-gray-400 text-xs mb-1">Word Count</div>
-            <div className="text-white text-xs">
-              Yours: {audit.word_count.yours} | Avg: {audit.word_count.serp_avg} | Top: {audit.word_count.serp_top}
-            </div>
-            <div className={`text-xs ${audit.word_count.status === "ok" ? "text-green-400" : "text-red-400"}`}>
-              {audit.word_count.recommendation}
-            </div>
+          <div className="bg-[#0a0a0a] p-4">
+            <p className="text-[11px] text-[#555] uppercase tracking-wider mb-2">Word Count</p>
+            <p className="text-[13px] text-[#fafafa] tabular-nums">{audit.word_count.yours} <span className="text-[#555]">/</span> {audit.word_count.serp_avg} avg</p>
+            <p className="text-[12px] text-[#666] leading-relaxed">{audit.word_count.recommendation}</p>
           </div>
         )}
         {audit.keyword_usage && (
-          <div className="bg-gray-800/50 rounded p-3">
-            <div className="text-gray-400 text-xs mb-1">Keyword Density</div>
-            <div className="text-white text-xs">
-              Yours: {audit.keyword_usage.density_yours}% | SERP Avg: {audit.keyword_usage.density_serp_avg}%
-            </div>
-            <div className={`text-xs ${audit.keyword_usage.status === "ok" ? "text-green-400" : "text-yellow-400"}`}>
-              {audit.keyword_usage.recommendation}
-            </div>
+          <div className="bg-[#0a0a0a] p-4">
+            <p className="text-[11px] text-[#555] uppercase tracking-wider mb-2">Keyword Density</p>
+            <p className="text-[13px] text-[#fafafa] tabular-nums">{audit.keyword_usage.density_yours}% <span className="text-[#555]">/</span> {audit.keyword_usage.density_serp_avg}% avg</p>
+            <p className="text-[12px] text-[#666] leading-relaxed">{audit.keyword_usage.recommendation}</p>
           </div>
         )}
         {audit.headings && (
-          <div className="bg-gray-800/50 rounded p-3">
-            <div className="text-gray-400 text-xs mb-1">Headings</div>
-            <div className="text-white text-xs">H1: {audit.headings.h1_count} | H2: {audit.headings.h2_count}</div>
-            <div className={`text-xs ${audit.headings.status === "ok" ? "text-green-400" : "text-yellow-400"}`}>
-              {audit.headings.recommendation}
-            </div>
+          <div className="bg-[#0a0a0a] p-4">
+            <p className="text-[11px] text-[#555] uppercase tracking-wider mb-2">Headings</p>
+            <p className="text-[13px] text-[#fafafa] tabular-nums">H1: {audit.headings.h1_count} &middot; H2: {audit.headings.h2_count}</p>
+            <p className="text-[12px] text-[#666] leading-relaxed">{audit.headings.recommendation}</p>
           </div>
         )}
       </div>
 
-      {/* Strengths */}
-      {audit.strengths?.length > 0 && (
-        <div>
-          <h4 className="text-green-400 font-medium mb-1">Strengths</h4>
-          <ul className="list-disc list-inside text-gray-300 text-xs space-y-1">
-            {audit.strengths.map((s, i) => <li key={i}>{s}</li>)}
-          </ul>
-        </div>
-      )}
-
-      {/* Content Gaps */}
-      {audit.content_gaps?.length > 0 && (
-        <div>
-          <h4 className="text-yellow-400 font-medium mb-1">Content Gaps</h4>
-          <ul className="list-disc list-inside text-gray-300 text-xs space-y-1">
-            {audit.content_gaps.map((g, i) => <li key={i}>{g}</li>)}
-          </ul>
-        </div>
-      )}
+      {/* Strengths & Gaps */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {audit.strengths?.length > 0 && (
+          <div>
+            <p className="text-[11px] text-[#555] uppercase tracking-wider mb-3">Strengths</p>
+            <ul className="space-y-2">
+              {audit.strengths.map((s, i) => (
+                <li key={i} className="text-[13px] text-[#888] leading-relaxed">{s}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {audit.content_gaps?.length > 0 && (
+          <div>
+            <p className="text-[11px] text-[#555] uppercase tracking-wider mb-3">Content Gaps</p>
+            <ul className="space-y-2">
+              {audit.content_gaps.map((g, i) => (
+                <li key={i} className="text-[13px] text-[#888] leading-relaxed">{g}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
 
       {/* Recommendations */}
       {audit.recommendations?.length > 0 && (
         <div>
-          <h4 className="text-blue-400 font-medium mb-2">Recommendations</h4>
-          <div className="space-y-2">
+          <p className="text-[11px] text-[#555] uppercase tracking-wider mb-3">Recommendations</p>
+          <div className="space-y-3">
             {audit.recommendations
               .sort((a, b) => a.priority - b.priority)
               .map((rec, i) => (
-                <div key={i} className="bg-gray-800/30 rounded p-3 border-l-2 border-blue-500/50">
+                <div key={i} className="border-l border-[#333] pl-4">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-blue-400 text-xs font-bold">#{rec.priority}</span>
-                    <span className="bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded text-xs">
-                      {rec.type}
-                    </span>
+                    <span className="text-[12px] text-[#555] tabular-nums">{rec.priority}.</span>
+                    <span className="text-[11px] text-[#555] uppercase tracking-wider">{rec.type}</span>
                   </div>
-                  <p className="text-white text-xs">{rec.action}</p>
-                  <p className="text-gray-500 text-xs mt-1">{rec.rationale}</p>
+                  <p className="text-[13px] text-[#fafafa] leading-relaxed">{rec.action}</p>
+                  <p className="text-[12px] text-[#555] mt-0.5">{rec.rationale}</p>
                 </div>
               ))}
           </div>
@@ -165,61 +150,57 @@ export function TableResults({ items, onRefresh }: TableResultsProps) {
 
   if (items.length === 0) {
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-8 text-center text-gray-500">
-        No optimization jobs yet. Enter a URL above to get started.
+      <div className="border border-[#222] rounded-xl p-12 text-center">
+        <p className="text-[14px] text-[#555]">No jobs yet</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
-      <table className="w-full text-sm">
+    <div className="border border-[#222] rounded-xl overflow-hidden">
+      <table className="w-full">
         <thead>
-          <tr className="border-b border-gray-800 text-gray-400">
-            <th className="text-left px-4 py-3 font-medium">ID</th>
-            <th className="text-left px-4 py-3 font-medium">URL</th>
-            <th className="text-left px-4 py-3 font-medium">Keyword</th>
-            <th className="text-left px-4 py-3 font-medium">Score</th>
-            <th className="text-left px-4 py-3 font-medium">Status</th>
-            <th className="text-left px-4 py-3 font-medium">Date</th>
+          <tr className="border-b border-[#222]">
+            <th className="text-left px-5 py-3 text-[11px] text-[#555] font-medium uppercase tracking-wider">URL</th>
+            <th className="text-left px-5 py-3 text-[11px] text-[#555] font-medium uppercase tracking-wider">Keyword</th>
+            <th className="text-left px-5 py-3 text-[11px] text-[#555] font-medium uppercase tracking-wider">Score</th>
+            <th className="text-left px-5 py-3 text-[11px] text-[#555] font-medium uppercase tracking-wider">Status</th>
+            <th className="text-left px-5 py-3 text-[11px] text-[#555] font-medium uppercase tracking-wider">Date</th>
           </tr>
         </thead>
         <tbody>
           {items.map((item) => {
             let audit: AuditResult | null = null;
             if (item.audit_result) {
-              try {
-                audit = JSON.parse(item.audit_result);
-              } catch {}
+              try { audit = JSON.parse(item.audit_result); } catch {}
             }
+
+            const status = statusLabel[item.status] || { text: item.status, color: "text-[#555]" };
 
             return (
               <>
                 <tr
                   key={item.id}
                   onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                  className="border-b border-gray-800/50 hover:bg-gray-800/50 cursor-pointer transition"
+                  className="border-b border-[#191919] hover:bg-[#111] cursor-pointer transition-colors duration-150"
                 >
-                  <td className="px-4 py-3 text-gray-300">#{item.id}</td>
-                  <td className="px-4 py-3 text-white truncate max-w-[200px]">{item.url}</td>
-                  <td className="px-4 py-3 text-gray-300">{item.keyword || "-"}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-5 py-3.5 text-[13px] text-[#fafafa] truncate max-w-[220px]">{item.url}</td>
+                  <td className="px-5 py-3.5 text-[13px] text-[#666]">{item.keyword || "\u2014"}</td>
+                  <td className="px-5 py-3.5">
                     {audit && !audit.parse_error && audit.overall_score !== undefined ? (
                       <ScoreBadge score={audit.overall_score} />
-                    ) : item.status === "done" ? (
-                      <span className="text-gray-500 text-xs">-</span>
-                    ) : null}
+                    ) : (
+                      <span className="text-[#333]">\u2014</span>
+                    )}
                   </td>
-                  <td className={`px-4 py-3 font-medium ${statusColors[item.status] || "text-gray-400"}`}>
-                    {item.status === "running" ? "running..." : item.status}
-                  </td>
-                  <td className="px-4 py-3 text-gray-400 text-xs">
-                    {new Date(item.created_at).toLocaleString()}
+                  <td className={`px-5 py-3.5 text-[13px] ${status.color}`}>{status.text}</td>
+                  <td className="px-5 py-3.5 text-[13px] text-[#555] tabular-nums">
+                    {new Date(item.created_at).toLocaleDateString()}
                   </td>
                 </tr>
                 {expandedId === item.id && audit && (
                   <tr key={`${item.id}-details`}>
-                    <td colSpan={6} className="px-6 py-4 bg-gray-800/20">
+                    <td colSpan={5} className="px-5 py-6 bg-[#111] border-b border-[#191919]">
                       <AuditDetails audit={audit} hasExport={item.has_export} jobId={item.id} />
                     </td>
                   </tr>

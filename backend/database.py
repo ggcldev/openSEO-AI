@@ -16,7 +16,7 @@ class Base(DeclarativeBase):
 
 def init_db():
     """Create all tables."""
-    from scrapling_core.models import ScrapeJob  # noqa: F401
+    from scrapling_core.models import OptimizationJob  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
 

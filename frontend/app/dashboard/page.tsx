@@ -29,11 +29,9 @@ export default function Dashboard() {
     fetchHistory();
   }, [fetchHistory]);
 
-  // Auto-refresh running jobs
   useEffect(() => {
     const hasRunning = history.some((j) => j.status === "pending" || j.status === "running");
     if (!hasRunning) return;
-
     const interval = setInterval(fetchHistory, 3000);
     return () => clearInterval(interval);
   }, [history, fetchHistory]);
@@ -51,7 +49,7 @@ export default function Dashboard() {
         keyword: keyword || undefined,
         num_competitors: numCompetitors,
       });
-      setMessage(`Job #${res.id} submitted — analyzing your page...`);
+      setMessage(`Job #${res.id} submitted`);
       setUrl("");
       setKeyword("");
       setTimeout(fetchHistory, 1500);
@@ -64,79 +62,78 @@ export default function Dashboard() {
 
   return (
     <div>
-      <h1 className="text-3xl font-bold mb-6">SEO Dashboard</h1>
+      <h1 className="text-[22px] font-semibold tracking-tight mb-8">Dashboard</h1>
 
-      {/* Optimization Form */}
-      <form
-        onSubmit={handleSubmit}
-        className="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-8"
-      >
-        <h2 className="text-lg font-semibold mb-4">Optimize a Page</h2>
+      {/* Form */}
+      <form onSubmit={handleSubmit} className="mb-12">
+        <div className="border border-[#222] rounded-xl p-6 bg-[#0a0a0a]">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
+            <div>
+              <label className="block text-[12px] text-[#666] mb-2 uppercase tracking-wider">
+                Page URL
+              </label>
+              <input
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://yoursite.com/page"
+                required
+                className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-[14px] text-[#fafafa] placeholder-[#444] transition-colors duration-200"
+              />
+            </div>
+            <div>
+              <label className="block text-[12px] text-[#666] mb-2 uppercase tracking-wider">
+                Primary Keyword <span className="text-[#444] normal-case">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                placeholder="e.g. best seo tools 2025"
+                className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-[14px] text-[#fafafa] placeholder-[#444] transition-colors duration-200"
+              />
+            </div>
+          </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">Page URL</label>
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://yoursite.com/page-to-optimize"
-              required
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-            />
+          <div className="flex items-end gap-5">
+            <div className="flex-1">
+              <label className="block text-[12px] text-[#666] mb-2 uppercase tracking-wider">
+                Competitors: {numCompetitors}
+              </label>
+              <input
+                type="range"
+                min={3}
+                max={10}
+                value={numCompetitors}
+                onChange={(e) => setNumCompetitors(Number(e.target.value))}
+                className="w-full accent-[#fafafa] h-1"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="bg-[#fafafa] text-[#0a0a0a] text-[13px] font-medium px-6 py-2.5 rounded-lg hover:bg-[#e0e0e0] disabled:opacity-30 transition-colors duration-200 whitespace-nowrap"
+            >
+              {loading ? "Submitting..." : "Run analysis"}
+            </button>
           </div>
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">
-              Primary Keyword <span className="text-gray-600">(optional)</span>
-            </label>
-            <input
-              type="text"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              placeholder="e.g. best seo tools 2025"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-            />
-          </div>
+
+          {message && (
+            <p className={`mt-4 text-[13px] ${message.startsWith("Error") ? "text-red-400" : "text-[#888]"}`}>
+              {message}
+            </p>
+          )}
         </div>
-
-        <div className="flex flex-col md:flex-row items-end gap-4">
-          <div className="flex-1">
-            <label className="block text-sm text-gray-400 mb-1">
-              Competitors to analyze: {numCompetitors}
-            </label>
-            <input
-              type="range"
-              min={3}
-              max={10}
-              value={numCompetitors}
-              onChange={(e) => setNumCompetitors(Number(e.target.value))}
-              className="w-full accent-blue-500"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-600 text-white font-medium px-8 py-2 rounded-lg transition whitespace-nowrap"
-          >
-            {loading ? "Submitting..." : "Run Optimization"}
-          </button>
-        </div>
-
-        {message && (
-          <p className={`mt-3 text-sm ${message.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>
-            {message}
-          </p>
-        )}
       </form>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-4 mb-6">
+      <div className="flex items-center gap-3 mb-5">
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+          className="bg-[#141414] border border-[#222] rounded-lg px-3 py-2 text-[13px] text-[#888] transition-colors duration-200 cursor-pointer"
         >
-          <option value="">All Statuses</option>
+          <option value="">All</option>
           <option value="pending">Pending</option>
           <option value="running">Running</option>
           <option value="done">Done</option>
@@ -144,7 +141,7 @@ export default function Dashboard() {
         </select>
         <button
           onClick={fetchHistory}
-          className="border border-gray-700 hover:border-gray-500 text-gray-300 text-sm px-4 py-2 rounded-lg transition"
+          className="text-[13px] text-[#555] hover:text-[#fafafa] transition-colors duration-200"
         >
           Refresh
         </button>

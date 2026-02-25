@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "openSEO AI",
-  description: "Open-source web scraping + AI agent dashboard",
+  description: "AI-powered SEO optimization",
 };
 
 export default function RootLayout({
@@ -13,23 +13,23 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-gray-950 text-gray-100 min-h-screen antialiased">
-        <nav className="border-b border-gray-800 px-6 py-4">
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <a href="/" className="text-xl font-bold text-white">
-              openSEO <span className="text-blue-400">AI</span>
+      <body className="min-h-screen antialiased">
+        <nav className="border-b border-[#222] px-8 py-5">
+          <div className="max-w-5xl mx-auto flex items-center justify-between">
+            <a href="/" className="text-[15px] font-medium tracking-tight text-[#fafafa]">
+              openSEO AI
             </a>
-            <div className="flex gap-4 text-sm">
-              <a href="/" className="text-gray-400 hover:text-white transition">
+            <div className="flex gap-6 text-[13px]">
+              <a href="/" className="text-[#888] hover:text-[#fafafa] transition-colors duration-200">
                 Home
               </a>
-              <a href="/dashboard" className="text-gray-400 hover:text-white transition">
+              <a href="/dashboard" className="text-[#888] hover:text-[#fafafa] transition-colors duration-200">
                 Dashboard
               </a>
             </div>
           </div>
         </nav>
-        <main className="max-w-7xl mx-auto px-6 py-8">{children}</main>
+        <main className="max-w-5xl mx-auto px-8 py-12">{children}</main>
       </body>
     </html>
   );
