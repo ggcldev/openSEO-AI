@@ -14,6 +14,10 @@ class OptimizationJob(Base):
     id = Column(Integer, primary_key=True, index=True)
     url = Column(String, nullable=False, index=True)
     keyword = Column(String, nullable=True)
+    page_type_input = Column(String, nullable=True)  # landing | product | service
+    region = Column(String, nullable=True)
+    language = Column(String, nullable=True)
+    goal = Column(String, nullable=True)  # leads | awareness | product_info
     num_competitors = Column(Integer, default=10)
     status = Column(String, nullable=False, default="pending", index=True)
     detected_intent = Column(String, nullable=True)

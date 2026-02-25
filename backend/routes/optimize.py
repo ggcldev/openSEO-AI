@@ -18,6 +18,10 @@ router = APIRouter()
 class OptimizeRequest(BaseModel):
     url: HttpUrl
     keyword: str = ""
+    page_type_input: str = "service"  # landing | product | service
+    region: str = "global"
+    language: str = "en"
+    goal: str = "leads"  # leads | awareness | product_info
     num_competitors: int = 10
 
 
@@ -31,10 +35,13 @@ class OptimizeResponse(BaseModel):
 
 @router.post("/optimize", response_model=OptimizeResponse)
 async def submit_optimization(req: OptimizeRequest, db: Session = Depends(get_db)):
-    """Submit a new SEO optimization job."""
     job = OptimizationJob(
         url=str(req.url),
         keyword=req.keyword or "",
+        page_type_input=req.page_type_input,
+        region=req.region,
+        language=req.language,
+        goal=req.goal,
         num_competitors=req.num_competitors,
         status="pending",
         created_at=datetime.now(timezone.utc),
@@ -43,19 +50,23 @@ async def submit_optimization(req: OptimizeRequest, db: Session = Depends(get_db
     db.commit()
     db.refresh(job)
 
-    asyncio.create_task(_run_optimization(job.id, str(req.url), req.keyword, req.num_competitors))
+    asyncio.create_task(_run_optimization(
+        job.id, str(req.url), req.keyword,
+        req.page_type_input, req.region, req.language, req.goal,
+        req.num_competitors,
+    ))
 
     return OptimizeResponse(
-        id=job.id,
-        url=job.url,
-        keyword=job.keyword,
-        status="pending",
-        message="Optimization job submitted. Check /api/history for results.",
+        id=job.id, url=job.url, keyword=job.keyword,
+        status="pending", message="Optimization job submitted.",
     )
 
 
-async def _run_optimization(job_id: int, url: str, keyword: str, num_competitors: int):
-    """Background task: SERP fetch → scrape → analyze → AI audit."""
+async def _run_optimization(
+    job_id: int, url: str, keyword: str,
+    page_type_input: str, region: str, language: str, goal: str,
+    num_competitors: int,
+):
     from database import SessionLocal
 
     db = SessionLocal()
@@ -67,7 +78,10 @@ async def _run_optimization(job_id: int, url: str, keyword: str, num_competitors
         job.status = "running"
         db.commit()
 
-        result = await asyncio.to_thread(_run_pipeline, url, keyword, num_competitors)
+        result = await asyncio.to_thread(
+            _run_pipeline, url, keyword,
+            page_type_input, region, language, goal, num_competitors,
+        )
 
         intent_data = result.get("intent_data", {})
         job.status = "done"
@@ -88,17 +102,20 @@ async def _run_optimization(job_id: int, url: str, keyword: str, num_competitors
         db.close()
 
 
-def _run_pipeline(url: str, keyword: str, num_competitors: int) -> dict:
+def _run_pipeline(
+    url: str, keyword: str,
+    page_type_input: str, region: str, language: str, goal: str,
+    num_competitors: int,
+) -> dict:
     """
-    Full SEO optimization pipeline (runs in thread).
-
+    Full optimization pipeline:
     1. Scrape user's page
-    2. Detect intent + page type
-    3. SERP fetch using intent-aware query
+    2. Detect intent
+    3. SERP fetch
     4. Scrape competitors
     5. Analyze all pages
-    6. Intent-aware AI audit
-    7. Intent-aware AI editor → optimized HTML
+    6. Generate Optimization Pack (AI audit)
+    7. Generate optimized HTML (AI editor)
     """
     from scrapling_core.engine import scrape_page, scrape_pages_parallel
     from scrapling_core.serp import get_serp_urls
@@ -110,13 +127,15 @@ def _run_pipeline(url: str, keyword: str, num_competitors: int) -> dict:
 
     llm = get_llm()
 
-    # Step 1: Scrape user's page
+    # Step 1: Scrape
     your_page = scrape_page(url)
 
-    # Step 2: Detect intent + page type
+    # Step 2: Detect intent (pass user's page type as hint)
     intent_data = detect_intent(llm, your_page)
+    # Override with user's explicit page type
+    intent_data["page_type"] = page_type_input
 
-    # Step 3: SERP — use AI-suggested query to find actual competitors
+    # Step 3: SERP
     competitor_urls = []
     serp_query = intent_data.get("serp_query") or keyword
     if serp_query:
@@ -139,7 +158,7 @@ def _run_pipeline(url: str, keyword: str, num_competitors: int) -> dict:
 
     gaps = compute_gaps(your_analysis, competitor_analyses)
 
-    # Step 6: Intent-aware AI Audit
+    # Step 6: Optimization Pack
     audit = run_seo_audit(
         llm,
         keyword=effective_keyword or "(no keyword specified)",
@@ -147,9 +166,12 @@ def _run_pipeline(url: str, keyword: str, num_competitors: int) -> dict:
         competitor_pages=competitor_analyses,
         gaps=gaps,
         intent_data=intent_data,
+        region=region,
+        language=language,
+        goal=goal,
     )
 
-    # Step 7: Intent-aware AI Editor → Optimized HTML
+    # Step 7: Optimized HTML
     optimized_html = ""
     if not audit.get("parse_error"):
         try:

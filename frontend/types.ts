@@ -1,6 +1,10 @@
 export interface OptimizeRequest {
   url: string;
   keyword?: string;
+  page_type_input?: string;
+  region?: string;
+  language?: string;
+  goal?: string;
   num_competitors?: number;
 }
 
@@ -16,6 +20,10 @@ export interface HistoryItem {
   id: number;
   url: string;
   keyword: string;
+  page_type_input: string | null;
+  region: string | null;
+  language: string | null;
+  goal: string | null;
   status: "pending" | "running" | "done" | "failed";
   detected_intent: string | null;
   page_type: string | null;
@@ -28,42 +36,48 @@ export interface HistoryItem {
 
 export interface AuditResult {
   overall_score: number;
-  title_tag: {
+  priority_action?: string;
+  effort_level?: string;
+
+  keywords?: {
+    primary: string;
+    secondary: string[];
+    intent_cluster: string;
+  };
+
+  title_tag?: {
     current: string;
-    status: string;
-    recommendation: string;
+    options: string[];
   };
-  meta_description: {
-    status: string;
-    recommendation: string;
+
+  meta_description?: {
+    options: string[];
   };
-  headings: {
-    h1_count: number;
-    h2_count: number;
-    status: string;
-    recommendation: string;
+
+  headings_plan?: {
+    recommended_h1: string;
+    outline: { tag: string; text: string; status: string; note: string }[];
   };
-  word_count: {
+
+  faq_pack?: { question: string; answer: string }[];
+
+  word_count?: {
     yours: number;
     serp_avg: number;
     serp_top: number;
-    status: string;
     recommendation: string;
   };
-  keyword_usage: {
-    density_yours: number;
-    density_serp_avg: number;
-    status: string;
-    recommendation: string;
+
+  content_gaps?: string[];
+  strengths?: string[];
+
+  change_summary?: {
+    keep: string[];
+    change: string[];
   };
-  content_gaps: string[];
-  strengths: string[];
-  recommendations: {
-    priority: number;
-    type: string;
-    action: string;
-    rationale: string;
-  }[];
+
+  checklist?: { task: string; location: string; priority: number }[];
+
   parse_error?: boolean;
   raw_output?: string;
 }

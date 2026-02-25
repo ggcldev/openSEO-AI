@@ -1,19 +1,22 @@
 """
-SEO Audit Agent — uses LangChain + Groq/Claude to produce
-a structured on-page SEO audit, tailored to the page's intent.
+SEO Audit Agent — generates a full Optimization Pack
+tailored to page type, region, language, and goal.
 """
 import json
 
 from langchain_core.prompts import PromptTemplate
 
 AUDIT_PROMPT = PromptTemplate(
-    input_variables=["keyword", "intent", "page_type", "industry", "your_page", "serp_summary", "gaps"],
-    template="""You are an expert SEO on-page auditor.
+    input_variables=["keyword", "page_type", "intent", "industry", "region", "language", "goal", "your_page", "serp_summary", "gaps"],
+    template="""You are an expert SEO on-page optimizer for Hitachi Energy.
 
 Target keyword: {keyword}
-Page intent: {intent}
 Page type: {page_type}
+Intent: {intent}
 Industry: {industry}
+Region: {region}
+Language: {language}
+Goal: {goal}
 
 YOUR PAGE DATA:
 {your_page}
@@ -24,81 +27,71 @@ SERP TOP-10 COMPETITOR SUMMARY:
 COMPUTED GAPS:
 {gaps}
 
-INTENT-SPECIFIC AUDIT CRITERIA:
-
-If TRANSACTIONAL (service_page, product_page, landing_page):
-- Does the page have clear CTAs (call-to-action)?
-- Are there trust signals (testimonials, reviews, certifications, case studies)?
-- Is pricing or service packaging mentioned?
-- Is there clear contact info or a lead form?
-- Are service/product benefits clearly articulated?
-- Does the page address objections or FAQs?
-
-If INFORMATIONAL (blog_post):
-- Is the content comprehensive and in-depth?
-- Does it have proper heading hierarchy for scannability?
-- Are there internal links to related content?
-- Does it include FAQ or "People Also Ask" sections?
-- Is readability appropriate for the audience?
-
-If COMMERCIAL (category_page, comparison):
-- Are there comparison elements (tables, pros/cons)?
-- Are products/services clearly categorized?
-- Are there reviews or ratings?
-- Is pricing information present?
-
-Perform a full on-page SEO audit appropriate for this page type. Return ONLY valid JSON:
+Generate a complete Optimization Pack. Return ONLY valid JSON:
 {{
   "overall_score": <int 0-100>,
-  "detected_intent": "{intent}",
-  "detected_page_type": "{page_type}",
+  "priority_action": "optimize_now|optimize_later|no_change",
+  "effort_level": "low|medium|high",
+
+  "keywords": {{
+    "primary": "<primary keyword>",
+    "secondary": ["<supporting keyword 1>", "<supporting keyword 2>", "<supporting keyword 3>"],
+    "intent_cluster": "<informational|commercial|transactional>"
+  }},
+
   "title_tag": {{
     "current": "<current title>",
-    "status": "ok|needs_improvement|missing",
-    "recommendation": "<specific suggestion>"
+    "options": ["<title option 1>", "<title option 2>", "<title option 3>"]
   }},
+
   "meta_description": {{
-    "status": "ok|needs_improvement|missing",
-    "recommendation": "<specific suggestion>"
+    "options": ["<meta desc option 1>", "<meta desc option 2>", "<meta desc option 3>"]
   }},
-  "headings": {{
-    "h1_count": <int>,
-    "h2_count": <int>,
-    "status": "ok|low|missing",
-    "recommendation": "<specific suggestion>"
+
+  "headings_plan": {{
+    "recommended_h1": "<recommended H1>",
+    "outline": [
+      {{"tag": "h2", "text": "<section heading>", "status": "keep|add|rewrite", "note": "<why>"}},
+      {{"tag": "h3", "text": "<sub-section>", "status": "keep|add|rewrite", "note": "<why>"}}
+    ]
   }},
+
+  "faq_pack": [
+    {{"question": "<question 1>", "answer": "<concise answer>"}},
+    {{"question": "<question 2>", "answer": "<concise answer>"}}
+  ],
+
   "word_count": {{
     "yours": <int>,
     "serp_avg": <int>,
     "serp_top": <int>,
-    "status": "ok|low|very_low",
     "recommendation": "<specific suggestion>"
   }},
-  "keyword_usage": {{
-    "density_yours": <float>,
-    "density_serp_avg": <float>,
-    "status": "ok|low|high",
-    "recommendation": "<specific suggestion>"
+
+  "content_gaps": ["<missing topic 1>", "<missing topic 2>"],
+  "strengths": ["<what the page does well>"],
+
+  "change_summary": {{
+    "keep": ["<what to keep as-is>"],
+    "change": ["<what to change and why>"]
   }},
-  "content_gaps": [
-    "<specific missing topic, element, or section>"
-  ],
-  "strengths": [
-    "<what the page does well>"
-  ],
-  "recommendations": [
-    {{
-      "priority": <int 1-8>,
-      "type": "title|meta|heading|content|keyword|structure|cta|trust|pricing",
-      "action": "<exactly what to do>",
-      "rationale": "<why this matters for ranking>"
-    }}
+
+  "checklist": [
+    {{"task": "<specific edit to make>", "location": "<where on the page>", "priority": <1-8>}}
   ]
 }}
 
-IMPORTANT: Tailor your recommendations to the page type. A service page needs CTAs and trust signals, not "add more blog content". A blog needs depth and structure, not "add pricing".
+TEMPLATE BY PAGE TYPE:
+- Service page: problem → approach/solution → deliverables/benefits → proof/case studies → FAQ → CTA
+- Product page: what it is → key specs/benefits → applications → proof → FAQ
+- Landing page: value proposition → key benefits → proof/social proof → FAQ → CTA
 
-Return ONLY the JSON object. No markdown fences, no explanation."""
+Generate 6-10 FAQs relevant to the page topic and intent.
+Generate 3 title options and 3 meta description options.
+Generate a complete headings outline following the template for this page type.
+Checklist should have 5-8 specific, actionable edits.
+
+Return ONLY the JSON. No markdown fences, no explanation."""
 )
 
 
@@ -108,25 +101,15 @@ def _truncate(text: str, max_chars: int = 8000) -> str:
     return text[:max_chars] + "\n[... truncated ...]"
 
 
-def run_seo_audit(llm, keyword: str, your_page: dict, competitor_pages: list[dict], gaps: dict, intent_data: dict = None) -> dict:
-    """
-    Run the full SEO audit agent.
-
-    Args:
-        llm:              LangChain LLM instance.
-        keyword:          Target keyword.
-        your_page:        Scraped + analyzed data for user's page.
-        competitor_pages: List of scraped + analyzed competitor pages.
-        gaps:             Output of compute_gaps().
-        intent_data:      Output of detect_intent() — intent, page_type, industry.
-
-    Returns:
-        Structured audit dict.
-    """
+def run_seo_audit(
+    llm, keyword: str, your_page: dict, competitor_pages: list[dict],
+    gaps: dict, intent_data: dict = None,
+    region: str = "global", language: str = "en", goal: str = "leads",
+) -> dict:
     intent_data = intent_data or {}
     intent = intent_data.get("intent", "informational")
-    page_type = intent_data.get("page_type", "blog_post")
-    industry = intent_data.get("industry", "general")
+    page_type = intent_data.get("page_type", "service")
+    industry = intent_data.get("industry", "energy")
 
     # Format competitor summary
     serp_lines = []
@@ -148,24 +131,24 @@ def run_seo_audit(llm, keyword: str, your_page: dict, competitor_pages: list[dic
         f"Word count: {your_page.get('word_count', 0)}\n"
         f"Keyword density: {your_page.get('keyword_density', 0)}%\n"
         f"Top keywords: {', '.join(your_page.get('top_keywords', []))}\n"
-        f"Entities found: {', '.join(your_page.get('entities', [])[:15])}"
+        f"Entities: {', '.join(your_page.get('entities', [])[:15])}"
     )
-
-    gaps_str = json.dumps(gaps, indent=2)
 
     chain = AUDIT_PROMPT | llm
     result = chain.invoke({
         "keyword": keyword,
-        "intent": intent,
         "page_type": page_type,
+        "intent": intent,
         "industry": industry,
+        "region": region,
+        "language": language,
+        "goal": goal,
         "your_page": _truncate(your_page_str, 3000),
         "serp_summary": _truncate(serp_summary, 2000),
-        "gaps": _truncate(gaps_str, 1500),
+        "gaps": _truncate(json.dumps(gaps, indent=2), 1500),
     })
 
     raw = result.content
-
     try:
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         return json.loads(clean)

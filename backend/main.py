@@ -1,6 +1,6 @@
 """
-openSEO AI — FastAPI Backend
-SEO on-page optimization API powered by Scrapling + AI agents.
+HE SEO Optimizer — FastAPI Backend
+Internal SEO optimization tool for Hitachi Energy.
 """
 from contextlib import asynccontextmanager
 
@@ -15,15 +15,14 @@ from routes.export import router as export_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on startup."""
     init_db()
     yield
 
 
 app = FastAPI(
-    title="openSEO AI",
-    description="Open-source SEO on-page optimization API",
-    version="0.1.0",
+    title="HE SEO Optimizer",
+    description="Internal SEO optimization tool for Hitachi Energy",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -42,4 +41,4 @@ app.include_router(export_router, prefix="/api")
 
 @app.get("/")
 async def root():
-    return {"message": "openSEO AI API is running", "docs": "/docs"}
+    return {"message": "HE SEO Optimizer API is running", "docs": "/docs"}
