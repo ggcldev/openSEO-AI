@@ -14,16 +14,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-screen antialiased">
-        <nav className="border-b border-[#222] px-8 py-5">
+        <nav className="border-b border-[#2a2a2a] px-8 py-5">
           <div className="max-w-5xl mx-auto flex items-center justify-between">
-            <a href="/" className="text-[15px] font-medium tracking-tight text-[#fafafa]">
+            <a href="/" className="text-[15px] font-medium tracking-tight text-white">
               openSEO AI
             </a>
             <div className="flex gap-6 text-[13px]">
-              <a href="/" className="text-[#888] hover:text-[#fafafa] transition-colors duration-200">
+              <a href="/" className="text-[#aaa] hover:text-white transition-colors duration-200">
                 Home
               </a>
-              <a href="/dashboard" className="text-[#888] hover:text-[#fafafa] transition-colors duration-200">
+              <a href="/dashboard" className="text-[#aaa] hover:text-white transition-colors duration-200">
                 Dashboard
               </a>
             </div>

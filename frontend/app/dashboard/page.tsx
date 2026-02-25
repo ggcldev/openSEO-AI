@@ -16,18 +16,14 @@ export default function Dashboard() {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const data = await getHistory({
-        status: filterStatus || undefined,
-      });
+      const data = await getHistory({ status: filterStatus || undefined });
       setHistory(data);
     } catch {
       console.error("Failed to fetch history");
     }
   }, [filterStatus]);
 
-  useEffect(() => {
-    fetchHistory();
-  }, [fetchHistory]);
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
   useEffect(() => {
     const hasRunning = history.some((j) => j.status === "pending" || j.status === "running");
@@ -39,16 +35,10 @@ export default function Dashboard() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) return;
-
     setLoading(true);
     setMessage("");
-
     try {
-      const res = await submitOptimization({
-        url,
-        keyword: keyword || undefined,
-        num_competitors: numCompetitors,
-      });
+      const res = await submitOptimization({ url, keyword: keyword || undefined, num_competitors: numCompetitors });
       setMessage(`Job #${res.id} submitted`);
       setUrl("");
       setKeyword("");
@@ -62,76 +52,68 @@ export default function Dashboard() {
 
   return (
     <div>
-      <h1 className="text-[22px] font-semibold tracking-tight mb-8">Dashboard</h1>
+      <h1 className="text-[22px] font-semibold tracking-tight mb-8 text-white">Dashboard</h1>
 
-      {/* Form */}
       <form onSubmit={handleSubmit} className="mb-12">
-        <div className="border border-[#222] rounded-xl p-6 bg-[#0a0a0a]">
+        <div className="border border-[#2a2a2a] rounded-xl p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
             <div>
-              <label className="block text-[12px] text-[#666] mb-2 uppercase tracking-wider">
-                Page URL
-              </label>
+              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">Page URL</label>
               <input
                 type="url"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://yoursite.com/page"
                 required
-                className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-[14px] text-[#fafafa] placeholder-[#444] transition-colors duration-200"
+                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-2.5 text-[14px] text-white placeholder-[#555] transition-colors duration-200"
               />
             </div>
             <div>
-              <label className="block text-[12px] text-[#666] mb-2 uppercase tracking-wider">
-                Primary Keyword <span className="text-[#444] normal-case">(optional)</span>
+              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">
+                Primary Keyword <span className="text-[#666] normal-case">(optional)</span>
               </label>
               <input
                 type="text"
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 placeholder="e.g. best seo tools 2025"
-                className="w-full bg-[#141414] border border-[#222] rounded-lg px-4 py-2.5 text-[14px] text-[#fafafa] placeholder-[#444] transition-colors duration-200"
+                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-2.5 text-[14px] text-white placeholder-[#555] transition-colors duration-200"
               />
             </div>
           </div>
 
           <div className="flex items-end gap-5">
             <div className="flex-1">
-              <label className="block text-[12px] text-[#666] mb-2 uppercase tracking-wider">
+              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">
                 Competitors: {numCompetitors}
               </label>
               <input
-                type="range"
-                min={3}
-                max={10}
-                value={numCompetitors}
+                type="range" min={3} max={10} value={numCompetitors}
                 onChange={(e) => setNumCompetitors(Number(e.target.value))}
-                className="w-full accent-[#fafafa] h-1"
+                className="w-full accent-white h-1"
               />
             </div>
             <button
-              type="submit"
-              disabled={loading}
-              className="bg-[#fafafa] text-[#0a0a0a] text-[13px] font-medium px-6 py-2.5 rounded-lg hover:bg-[#e0e0e0] disabled:opacity-30 transition-colors duration-200 whitespace-nowrap"
+              type="submit" disabled={loading}
+              className="bg-white text-[#111] text-[13px] font-medium px-6 py-2.5 rounded-lg hover:bg-[#ddd] disabled:opacity-30 transition-colors duration-200 whitespace-nowrap"
             >
               {loading ? "Submitting..." : "Run analysis"}
             </button>
           </div>
 
           {message && (
-            <p className={`mt-4 text-[13px] ${message.startsWith("Error") ? "text-red-400" : "text-[#888]"}`}>
+            <p className={`mt-4 text-[13px] ${message.startsWith("Error") ? "text-red-400" : "text-[#aaa]"}`}>
               {message}
             </p>
           )}
         </div>
       </form>
 
-      {/* Filters */}
       <div className="flex items-center gap-3 mb-5">
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="bg-[#141414] border border-[#222] rounded-lg px-3 py-2 text-[13px] text-[#888] transition-colors duration-200 cursor-pointer"
+          className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-2 text-[13px] text-[#aaa] cursor-pointer transition-colors duration-200"
         >
           <option value="">All</option>
           <option value="pending">Pending</option>
@@ -139,15 +121,11 @@ export default function Dashboard() {
           <option value="done">Done</option>
           <option value="failed">Failed</option>
         </select>
-        <button
-          onClick={fetchHistory}
-          className="text-[13px] text-[#555] hover:text-[#fafafa] transition-colors duration-200"
-        >
+        <button onClick={fetchHistory} className="text-[13px] text-[#777] hover:text-white transition-colors duration-200">
           Refresh
         </button>
       </div>
 
-      {/* Results */}
       <TableResults items={history} onRefresh={fetchHistory} />
     </div>
   );

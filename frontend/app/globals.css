@@ -2,22 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --bg-primary: #0a0a0a;
-  --bg-secondary: #141414;
-  --bg-tertiary: #1a1a1a;
-  --border: #222222;
-  --border-hover: #333333;
-  --text-primary: #fafafa;
-  --text-secondary: #888888;
-  --text-tertiary: #555555;
-  --accent: #fafafa;
-}
-
 body {
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-feature-settings: "ss01", "ss02", "cv01";
+  background-color: #111111;
+  color: #e8e8e8;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -31,5 +18,5 @@ input, select, textarea {
 }
 
 input:focus, select:focus, textarea:focus {
-  border-color: var(--border-hover) !important;
+  border-color: #444 !important;
 }
