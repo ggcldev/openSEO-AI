@@ -10,18 +10,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="min-h-screen antialiased">
-        <nav className="border-b border-[#2a2a2a] px-8 py-5">
-          <div className="max-w-6xl mx-auto flex items-center justify-between">
-            <a href="/" className="text-[15px] font-medium tracking-tight text-white">
+        <nav className="border-b border-[#282828] px-8 py-4">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <a href="/" className="text-[14px] font-semibold text-white tracking-tight">
               HE SEO Optimizer
             </a>
-            <div className="flex gap-6 text-[13px]">
-              <a href="/" className="text-[#aaa] hover:text-white transition-colors duration-200">Home</a>
-              <a href="/dashboard" className="text-[#aaa] hover:text-white transition-colors duration-200">Dashboard</a>
-            </div>
+            <a href="/dashboard" className="text-[13px] text-[#999] hover:text-white transition-colors">
+              Dashboard
+            </a>
           </div>
         </nav>
-        <main className="max-w-6xl mx-auto px-8 py-12">{children}</main>
+        <main className="max-w-4xl mx-auto px-8 py-10">{children}</main>
       </body>
     </html>
   );

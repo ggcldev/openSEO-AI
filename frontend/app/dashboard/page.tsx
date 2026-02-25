@@ -5,24 +5,6 @@ import { submitOptimization, getHistory } from "@/lib/apiClient";
 import { TableResults } from "@/components/TableResults";
 import type { HistoryItem } from "@/types";
 
-const REGIONS = [
-  { value: "global", label: "Global" },
-  { value: "apac", label: "APAC" },
-  { value: "emea", label: "EMEA" },
-  { value: "nam", label: "North America" },
-  { value: "latam", label: "Latin America" },
-];
-
-const LANGUAGES = [
-  { value: "en", label: "English" },
-  { value: "de", label: "German" },
-  { value: "fr", label: "French" },
-  { value: "es", label: "Spanish" },
-  { value: "pt", label: "Portuguese" },
-  { value: "zh", label: "Chinese" },
-  { value: "ja", label: "Japanese" },
-];
-
 export default function Dashboard() {
   const [url, setUrl] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -37,21 +19,14 @@ export default function Dashboard() {
   const [filterStatus, setFilterStatus] = useState("");
 
   const fetchHistory = useCallback(async () => {
-    try {
-      const data = await getHistory({ status: filterStatus || undefined });
-      setHistory(data);
-    } catch {
-      console.error("Failed to fetch history");
-    }
+    try { setHistory(await getHistory({ status: filterStatus || undefined })); } catch {}
   }, [filterStatus]);
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
-
   useEffect(() => {
-    const hasRunning = history.some((j) => j.status === "pending" || j.status === "running");
-    if (!hasRunning) return;
-    const interval = setInterval(fetchHistory, 3000);
-    return () => clearInterval(interval);
+    if (!history.some((j) => j.status === "pending" || j.status === "running")) return;
+    const i = setInterval(fetchHistory, 3000);
+    return () => clearInterval(i);
   }, [history, fetchHistory]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -71,113 +46,88 @@ export default function Dashboard() {
       setTimeout(fetchHistory, 1500);
     } catch (err) {
       setMessage(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
+
+  const selectClass = "bg-[#1e1e1e] border border-[#303030] rounded-lg px-3 py-2 text-[13px] text-[#ccc] cursor-pointer transition-colors";
+  const inputClass = "w-full bg-[#1e1e1e] border border-[#303030] rounded-lg px-4 py-2.5 text-[14px] text-white placeholder-[#555] transition-colors";
 
   return (
     <div>
-      <h1 className="text-[22px] font-semibold tracking-tight mb-8 text-white">Dashboard</h1>
-
-      <form onSubmit={handleSubmit} className="mb-12">
-        <div className="border border-[#2a2a2a] rounded-xl p-6">
-          {/* Row 1: URL + Keyword */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
-            <div>
-              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">Page URL</label>
-              <input
-                type="url" value={url} onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://www.hitachienergy.com/..."
-                required
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-2.5 text-[14px] text-white placeholder-[#555] transition-colors duration-200"
-              />
-            </div>
-            <div>
-              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">
-                Primary Keyword <span className="text-[#666] normal-case">(optional)</span>
-              </label>
-              <input
-                type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)}
-                placeholder="e.g. renewable energy solutions"
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-4 py-2.5 text-[14px] text-white placeholder-[#555] transition-colors duration-200"
-              />
-            </div>
-          </div>
-
-          {/* Row 2: Page Type + Region + Language + Goal */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-            <div>
-              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">Page Type</label>
-              <select value={pageType} onChange={(e) => setPageType(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-2.5 text-[13px] text-white cursor-pointer">
-                <option value="service">Service</option>
-                <option value="product">Product</option>
-                <option value="landing">Landing</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">Region</label>
-              <select value={region} onChange={(e) => setRegion(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-2.5 text-[13px] text-white cursor-pointer">
-                {REGIONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">Language</label>
-              <select value={language} onChange={(e) => setLanguage(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-2.5 text-[13px] text-white cursor-pointer">
-                {LANGUAGES.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">Goal</label>
-              <select value={goal} onChange={(e) => setGoal(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-2.5 text-[13px] text-white cursor-pointer">
-                <option value="leads">Leads</option>
-                <option value="awareness">Awareness</option>
-                <option value="product_info">Product Info</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Row 3: Competitors slider + Submit */}
-          <div className="flex items-end gap-5">
-            <div className="flex-1">
-              <label className="block text-[12px] text-[#999] mb-2 uppercase tracking-wider">
-                Competitors: {numCompetitors}
-              </label>
-              <input type="range" min={3} max={10} value={numCompetitors}
-                onChange={(e) => setNumCompetitors(Number(e.target.value))}
-                className="w-full accent-white h-1" />
-            </div>
-            <button type="submit" disabled={loading}
-              className="bg-white text-[#111] text-[13px] font-medium px-6 py-2.5 rounded-lg hover:bg-[#ddd] disabled:opacity-30 transition-colors duration-200 whitespace-nowrap">
-              {loading ? "Submitting..." : "Run Optimization"}
-            </button>
-          </div>
-
-          {message && (
-            <p className={`mt-4 text-[13px] ${message.startsWith("Error") ? "text-red-400" : "text-[#aaa]"}`}>
-              {message}
-            </p>
-          )}
+      {/* Form */}
+      <form onSubmit={handleSubmit} className="mb-14">
+        {/* URL */}
+        <div className="mb-4">
+          <input type="url" value={url} onChange={(e) => setUrl(e.target.value)}
+            placeholder="Paste a URL to optimize" required className={inputClass} />
         </div>
+
+        {/* Keyword */}
+        <div className="mb-5">
+          <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)}
+            placeholder="Primary keyword (optional)" className={inputClass} />
+        </div>
+
+        {/* Settings row */}
+        <div className="flex flex-wrap items-center gap-3 mb-5">
+          <select value={pageType} onChange={(e) => setPageType(e.target.value)} className={selectClass}>
+            <option value="service">Service</option>
+            <option value="product">Product</option>
+            <option value="landing">Landing</option>
+          </select>
+          <select value={region} onChange={(e) => setRegion(e.target.value)} className={selectClass}>
+            <option value="global">Global</option>
+            <option value="apac">APAC</option>
+            <option value="emea">EMEA</option>
+            <option value="nam">NAM</option>
+            <option value="latam">LATAM</option>
+          </select>
+          <select value={language} onChange={(e) => setLanguage(e.target.value)} className={selectClass}>
+            <option value="en">English</option>
+            <option value="de">German</option>
+            <option value="fr">French</option>
+            <option value="es">Spanish</option>
+            <option value="pt">Portuguese</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+          </select>
+          <select value={goal} onChange={(e) => setGoal(e.target.value)} className={selectClass}>
+            <option value="leads">Leads</option>
+            <option value="awareness">Awareness</option>
+            <option value="product_info">Product Info</option>
+          </select>
+
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-[12px] text-[#777]">{numCompetitors} competitors</span>
+            <input type="range" min={3} max={10} value={numCompetitors}
+              onChange={(e) => setNumCompetitors(Number(e.target.value))}
+              className="w-20 accent-white h-1" />
+          </div>
+        </div>
+
+        {/* Submit */}
+        <button type="submit" disabled={loading}
+          className="bg-white text-[#161616] text-[13px] font-medium px-6 py-2.5 rounded-lg hover:bg-[#e0e0e0] disabled:opacity-30 transition-colors">
+          {loading ? "Submitting..." : "Run Optimization"}
+        </button>
+
+        {message && (
+          <span className={`ml-4 text-[13px] ${message.startsWith("Error") ? "text-red-400" : "text-[#999]"}`}>
+            {message}
+          </span>
+        )}
       </form>
 
-      {/* Filters */}
-      <div className="flex items-center gap-3 mb-5">
+      {/* Filter + Results */}
+      <div className="flex items-center gap-3 mb-4">
+        <p className="text-[13px] text-[#777]">History</p>
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
-          className="bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-3 py-2 text-[13px] text-[#aaa] cursor-pointer">
+          className="bg-[#1e1e1e] border border-[#303030] rounded px-2 py-1 text-[12px] text-[#999] cursor-pointer">
           <option value="">All</option>
-          <option value="pending">Pending</option>
-          <option value="running">Running</option>
           <option value="done">Done</option>
+          <option value="running">Running</option>
           <option value="failed">Failed</option>
         </select>
-        <button onClick={fetchHistory} className="text-[13px] text-[#777] hover:text-white transition-colors duration-200">
-          Refresh
-        </button>
       </div>
 
       <TableResults items={history} onRefresh={fetchHistory} />
