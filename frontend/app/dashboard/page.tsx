@@ -49,26 +49,21 @@ export default function Dashboard() {
     } finally { setLoading(false); }
   };
 
-  const selectClass = "bg-[#1e1e1e] border border-[#303030] rounded-lg px-3 py-2 text-[13px] text-[#ccc] cursor-pointer transition-colors";
-  const inputClass = "w-full bg-[#1e1e1e] border border-[#303030] rounded-lg px-4 py-2.5 text-[14px] text-white placeholder-[#555] transition-colors";
+  const selectClass = "bg-[#f5f5f5] border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#555] cursor-pointer transition-colors";
+  const inputClass = "w-full bg-[#f5f5f5] border border-[#e0e0e0] rounded-lg px-4 py-2.5 text-[14px] text-[#1a1a1a] placeholder-[#aaa] transition-colors";
 
   return (
     <div>
-      {/* Form */}
       <form onSubmit={handleSubmit} className="mb-14">
-        {/* URL */}
         <div className="mb-4">
           <input type="url" value={url} onChange={(e) => setUrl(e.target.value)}
             placeholder="Paste a URL to optimize" required className={inputClass} />
         </div>
-
-        {/* Keyword */}
         <div className="mb-5">
           <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)}
             placeholder="Primary keyword (optional)" className={inputClass} />
         </div>
 
-        {/* Settings row */}
         <div className="flex flex-wrap items-center gap-3 mb-5">
           <select value={pageType} onChange={(e) => setPageType(e.target.value)} className={selectClass}>
             <option value="service">Service</option>
@@ -96,33 +91,29 @@ export default function Dashboard() {
             <option value="awareness">Awareness</option>
             <option value="product_info">Product Info</option>
           </select>
-
           <div className="flex items-center gap-2 ml-auto">
-            <span className="text-[12px] text-[#777]">{numCompetitors} competitors</span>
+            <span className="text-[12px] text-[#aaa]">{numCompetitors} competitors</span>
             <input type="range" min={3} max={10} value={numCompetitors}
               onChange={(e) => setNumCompetitors(Number(e.target.value))}
-              className="w-20 accent-white h-1" />
+              className="w-20 accent-[#1a1a1a] h-1" />
           </div>
         </div>
 
-        {/* Submit */}
         <button type="submit" disabled={loading}
-          className="bg-white text-[#161616] text-[13px] font-medium px-6 py-2.5 rounded-lg hover:bg-[#e0e0e0] disabled:opacity-30 transition-colors">
+          className="bg-[#1a1a1a] text-[#fcfcfc] text-[13px] font-medium px-6 py-2.5 rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors">
           {loading ? "Submitting..." : "Run Optimization"}
         </button>
-
         {message && (
-          <span className={`ml-4 text-[13px] ${message.startsWith("Error") ? "text-red-400" : "text-[#999]"}`}>
+          <span className={`ml-4 text-[13px] ${message.startsWith("Error") ? "text-red-500" : "text-[#888]"}`}>
             {message}
           </span>
         )}
       </form>
 
-      {/* Filter + Results */}
       <div className="flex items-center gap-3 mb-4">
-        <p className="text-[13px] text-[#777]">History</p>
+        <p className="text-[13px] text-[#aaa]">History</p>
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
-          className="bg-[#1e1e1e] border border-[#303030] rounded px-2 py-1 text-[12px] text-[#999] cursor-pointer">
+          className="bg-[#f5f5f5] border border-[#e0e0e0] rounded px-2 py-1 text-[12px] text-[#888] cursor-pointer">
           <option value="">All</option>
           <option value="done">Done</option>
           <option value="running">Running</option>

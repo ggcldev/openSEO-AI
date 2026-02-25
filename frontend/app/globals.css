@@ -3,14 +3,14 @@
 @tailwind utilities;
 
 body {
-  background-color: #161616;
-  color: #e8e8e8;
+  background-color: #fcfcfc;
+  color: #1a1a1a;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 ::selection {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.08);
 }
 
 input, select, textarea {
@@ -18,5 +18,5 @@ input, select, textarea {
 }
 
 input:focus, select:focus {
-  border-color: #555 !important;
+  border-color: #999 !important;
 }
