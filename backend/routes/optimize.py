@@ -18,10 +18,7 @@ router = APIRouter()
 class OptimizeRequest(BaseModel):
     url: HttpUrl
     keyword: str = ""
-    page_type_input: str = "service"  # landing | product | service
-    region: str = "global"
-    language: str = "en"
-    goal: str = "leads"  # leads | awareness | product_info
+    goal: str = "leads"
     num_competitors: int = 10
 
 
@@ -38,9 +35,6 @@ async def submit_optimization(req: OptimizeRequest, db: Session = Depends(get_db
     job = OptimizationJob(
         url=str(req.url),
         keyword=req.keyword or "",
-        page_type_input=req.page_type_input,
-        region=req.region,
-        language=req.language,
         goal=req.goal,
         num_competitors=req.num_competitors,
         status="pending",
@@ -51,9 +45,7 @@ async def submit_optimization(req: OptimizeRequest, db: Session = Depends(get_db
     db.refresh(job)
 
     asyncio.create_task(_run_optimization(
-        job.id, str(req.url), req.keyword,
-        req.page_type_input, req.region, req.language, req.goal,
-        req.num_competitors,
+        job.id, str(req.url), req.keyword, req.goal, req.num_competitors,
     ))
 
     return OptimizeResponse(
@@ -63,9 +55,7 @@ async def submit_optimization(req: OptimizeRequest, db: Session = Depends(get_db
 
 
 async def _run_optimization(
-    job_id: int, url: str, keyword: str,
-    page_type_input: str, region: str, language: str, goal: str,
-    num_competitors: int,
+    job_id: int, url: str, keyword: str, goal: str, num_competitors: int,
 ):
     from database import SessionLocal
 
@@ -79,14 +69,15 @@ async def _run_optimization(
         db.commit()
 
         result = await asyncio.to_thread(
-            _run_pipeline, url, keyword,
-            page_type_input, region, language, goal, num_competitors,
+            _run_pipeline, url, keyword, goal, num_competitors,
         )
 
         intent_data = result.get("intent_data", {})
         job.status = "done"
         job.detected_intent = intent_data.get("intent", "")
         job.page_type = intent_data.get("page_type", "")
+        job.region = intent_data.get("region", "")
+        job.language = intent_data.get("language", "")
         job.audit_result = json.dumps(result.get("audit", {}), ensure_ascii=False)
         job.optimized_html = result.get("optimized_html", "")
         job.competitor_urls = json.dumps(result.get("competitor_urls", []))
@@ -102,21 +93,7 @@ async def _run_optimization(
         db.close()
 
 
-def _run_pipeline(
-    url: str, keyword: str,
-    page_type_input: str, region: str, language: str, goal: str,
-    num_competitors: int,
-) -> dict:
-    """
-    Full optimization pipeline:
-    1. Scrape user's page
-    2. Detect intent
-    3. SERP fetch
-    4. Scrape competitors
-    5. Analyze all pages
-    6. Generate Optimization Pack (AI audit)
-    7. Generate optimized HTML (AI editor)
-    """
+def _run_pipeline(url: str, keyword: str, goal: str, num_competitors: int) -> dict:
     from scrapling_core.engine import scrape_page, scrape_pages_parallel
     from scrapling_core.serp import get_serp_urls
     from scrapling_core.analyzer import analyze_content, compute_gaps
@@ -127,15 +104,13 @@ def _run_pipeline(
 
     llm = get_llm()
 
-    # Step 1: Scrape
+    # 1. Scrape
     your_page = scrape_page(url)
 
-    # Step 2: Detect intent (pass user's page type as hint)
+    # 2. Auto-detect intent, page type, region, language
     intent_data = detect_intent(llm, your_page)
-    # Override with user's explicit page type
-    intent_data["page_type"] = page_type_input
 
-    # Step 3: SERP
+    # 3. SERP
     competitor_urls = []
     serp_query = intent_data.get("serp_query") or keyword
     if serp_query:
@@ -145,51 +120,42 @@ def _run_pipeline(
         except Exception:
             competitor_urls = []
 
-    # Step 4: Scrape competitors
+    # 4. Scrape competitors
     competitor_pages = scrape_pages_parallel(competitor_urls) if competitor_urls else []
 
-    # Step 5: Analyze
+    # 5. Analyze
     effective_keyword = keyword or intent_data.get("industry", "")
     your_analysis = {**your_page, **analyze_content(your_page.get("body_text", ""), effective_keyword)}
-    competitor_analyses = []
-    for page in competitor_pages:
-        analysis = {**page, **analyze_content(page.get("body_text", ""), effective_keyword)}
-        competitor_analyses.append(analysis)
-
+    competitor_analyses = [
+        {**page, **analyze_content(page.get("body_text", ""), effective_keyword)}
+        for page in competitor_pages
+    ]
     gaps = compute_gaps(your_analysis, competitor_analyses)
 
-    # Step 6: Optimization Pack
+    # 6. Optimization Pack
     audit = run_seo_audit(
-        llm,
-        keyword=effective_keyword or "(no keyword specified)",
-        your_page=your_analysis,
-        competitor_pages=competitor_analyses,
-        gaps=gaps,
-        intent_data=intent_data,
-        region=region,
-        language=language,
+        llm, keyword=effective_keyword or "(auto-detected)",
+        your_page=your_analysis, competitor_pages=competitor_analyses,
+        gaps=gaps, intent_data=intent_data,
+        region=intent_data.get("region", "global"),
+        language=intent_data.get("language", "en"),
         goal=goal,
     )
 
-    # Step 7: Optimized HTML
+    # 7. Optimized HTML
     optimized_html = ""
     if not audit.get("parse_error"):
         try:
             optimized_html = run_editor(
-                llm,
-                keyword=effective_keyword or "(no keyword specified)",
+                llm, keyword=effective_keyword or "(auto-detected)",
                 original_text=your_page.get("body_text", ""),
                 title=your_page.get("title", ""),
-                audit=audit,
-                intent_data=intent_data,
+                audit=audit, intent_data=intent_data,
             )
         except Exception:
             optimized_html = ""
 
     return {
-        "audit": audit,
-        "optimized_html": optimized_html,
-        "competitor_urls": competitor_urls,
-        "intent_data": intent_data,
-        "gaps": gaps,
+        "audit": audit, "optimized_html": optimized_html,
+        "competitor_urls": competitor_urls, "intent_data": intent_data, "gaps": gaps,
     }

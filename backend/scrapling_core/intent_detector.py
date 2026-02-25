@@ -1,7 +1,5 @@
 """
-Intent Detector — classifies a page's search intent and type
-before running the SEO audit. This ensures the audit, SERP query,
-and editor all tailor their output to the correct page type.
+Intent Detector — classifies page intent, type, region, and language.
 """
 import json
 
@@ -10,7 +8,7 @@ from langchain_core.prompts import PromptTemplate
 
 INTENT_PROMPT = PromptTemplate(
     input_variables=["url", "title", "headings", "body_snippet"],
-    template="""You are an SEO expert. Analyze this page and classify its search intent and type.
+    template="""You are an SEO expert. Analyze this page and classify it.
 
 URL: {url}
 TITLE: {title}
@@ -20,33 +18,24 @@ CONTENT SNIPPET: {body_snippet}
 Return ONLY valid JSON:
 {{
   "intent": "<transactional|informational|commercial|navigational>",
-  "page_type": "<service_page|product_page|blog_post|landing_page|about_page|category_page|homepage>",
-  "industry": "<detected industry or niche, e.g. 'renewable energy', 'digital marketing'>",
-  "serp_query": "<the best Google search query to find competing pages of the SAME TYPE and intent, not blog posts about the topic>"
+  "page_type": "<service|product|landing>",
+  "industry": "<detected industry or niche>",
+  "region": "<global|apac|emea|nam|latam>",
+  "language": "<en|de|fr|es|pt|zh|ja>",
+  "serp_query": "<best Google query to find competing pages of the SAME type and intent>"
 }}
 
-Guidelines for serp_query:
-- If it's a service page for "web design" → search "web design services" or "web design agency"
-- If it's a product page for a CRM → search "CRM software" or "best CRM tools"
-- If it's a blog post about SEO tips → search "SEO tips" or "SEO guide"
-- The goal is to find pages that are DIRECT COMPETITORS in format and intent.
+Rules:
+- page_type: "service" for service/solution pages, "product" for product pages, "landing" for general landing/market pages
+- region: detect from URL path (e.g. /us/ = nam, /de/ = emea, /cn/ = apac), domain TLD, or content. Default "global" if unclear.
+- language: detect from content language. Default "en" if unclear.
+- serp_query: find DIRECT COMPETITORS in format and intent, not blog posts about the topic.
 
-Return ONLY the JSON. No explanation."""
+Return ONLY the JSON."""
 )
 
 
 def detect_intent(llm, page_data: dict) -> dict:
-    """
-    Detect the search intent and page type from scraped page data.
-
-    Args:
-        llm:        LangChain LLM instance.
-        page_data:  Scraped page dict with url, title, headings, body_text.
-
-    Returns:
-        Dict with intent, page_type, industry, serp_query.
-        Falls back to defaults on parse error.
-    """
     headings = page_data.get("headings", [])
     headings_str = ", ".join(
         f"[{h.get('tag', '')}] {h.get('text', '')}" for h in headings[:15]
@@ -70,14 +59,18 @@ def detect_intent(llm, page_data: dict) -> dict:
         parsed = json.loads(clean)
         return {
             "intent": parsed.get("intent", "informational"),
-            "page_type": parsed.get("page_type", "blog_post"),
+            "page_type": parsed.get("page_type", "service"),
             "industry": parsed.get("industry", ""),
+            "region": parsed.get("region", "global"),
+            "language": parsed.get("language", "en"),
             "serp_query": parsed.get("serp_query", ""),
         }
     except (json.JSONDecodeError, AttributeError):
         return {
             "intent": "informational",
-            "page_type": "blog_post",
+            "page_type": "service",
             "industry": "",
+            "region": "global",
+            "language": "en",
             "serp_query": "",
         }

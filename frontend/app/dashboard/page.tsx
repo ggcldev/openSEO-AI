@@ -8,9 +8,7 @@ import type { HistoryItem } from "@/types";
 export default function Dashboard() {
   const [url, setUrl] = useState("");
   const [keyword, setKeyword] = useState("");
-  const [pageType, setPageType] = useState("service");
-  const [region, setRegion] = useState("global");
-  const [language, setLanguage] = useState("en");
+  const [showSettings, setShowSettings] = useState(false);
   const [goal, setGoal] = useState("leads");
   const [numCompetitors, setNumCompetitors] = useState(10);
   const [loading, setLoading] = useState(false);
@@ -36,9 +34,7 @@ export default function Dashboard() {
     setMessage("");
     try {
       const res = await submitOptimization({
-        url, keyword: keyword || undefined,
-        page_type_input: pageType, region, language, goal,
-        num_competitors: numCompetitors,
+        url, keyword: keyword || undefined, goal, num_competitors: numCompetitors,
       });
       setMessage(`Job #${res.id} submitted`);
       setUrl("");
@@ -49,67 +45,75 @@ export default function Dashboard() {
     } finally { setLoading(false); }
   };
 
-  const selectClass = "bg-[#f5f5f5] border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#555] cursor-pointer transition-colors";
-  const inputClass = "w-full bg-[#f5f5f5] border border-[#e0e0e0] rounded-lg px-4 py-2.5 text-[14px] text-[#1a1a1a] placeholder-[#aaa] transition-colors";
-
   return (
     <div>
       <form onSubmit={handleSubmit} className="mb-14">
-        <div className="mb-4">
+        {/* URL input */}
+        <div className="mb-3">
           <input type="url" value={url} onChange={(e) => setUrl(e.target.value)}
-            placeholder="Paste a URL to optimize" required className={inputClass} />
+            placeholder="Paste a URL to optimize"
+            required
+            className="w-full bg-[#f5f5f5] border border-[#e0e0e0] rounded-lg px-4 py-2.5 text-[14px] text-[#1a1a1a] placeholder-[#aaa] transition-colors" />
         </div>
-        <div className="mb-5">
+
+        {/* Keyword + actions row */}
+        <div className="flex gap-2 mb-3">
           <input type="text" value={keyword} onChange={(e) => setKeyword(e.target.value)}
-            placeholder="Primary keyword (optional)" className={inputClass} />
+            placeholder="Primary keyword (optional)"
+            className="flex-1 bg-[#f5f5f5] border border-[#e0e0e0] rounded-lg px-4 py-2.5 text-[14px] text-[#1a1a1a] placeholder-[#aaa] transition-colors" />
+
+          {/* Settings toggle */}
+          <button type="button" onClick={() => setShowSettings(!showSettings)}
+            className={`px-3 py-2.5 rounded-lg border transition-colors ${
+              showSettings
+                ? "bg-[#eee] border-[#ccc] text-[#1a1a1a]"
+                : "bg-[#f5f5f5] border-[#e0e0e0] text-[#aaa] hover:text-[#666]"
+            }`}
+            title="Settings">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
+
+          {/* Submit */}
+          <button type="submit" disabled={loading}
+            className="bg-[#1a1a1a] text-[#fcfcfc] text-[13px] font-medium px-5 py-2.5 rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors">
+            {loading ? "Running..." : "Optimize"}
+          </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 mb-5">
-          <select value={pageType} onChange={(e) => setPageType(e.target.value)} className={selectClass}>
-            <option value="service">Service</option>
-            <option value="product">Product</option>
-            <option value="landing">Landing</option>
-          </select>
-          <select value={region} onChange={(e) => setRegion(e.target.value)} className={selectClass}>
-            <option value="global">Global</option>
-            <option value="apac">APAC</option>
-            <option value="emea">EMEA</option>
-            <option value="nam">NAM</option>
-            <option value="latam">LATAM</option>
-          </select>
-          <select value={language} onChange={(e) => setLanguage(e.target.value)} className={selectClass}>
-            <option value="en">English</option>
-            <option value="de">German</option>
-            <option value="fr">French</option>
-            <option value="es">Spanish</option>
-            <option value="pt">Portuguese</option>
-            <option value="zh">Chinese</option>
-            <option value="ja">Japanese</option>
-          </select>
-          <select value={goal} onChange={(e) => setGoal(e.target.value)} className={selectClass}>
-            <option value="leads">Leads</option>
-            <option value="awareness">Awareness</option>
-            <option value="product_info">Product Info</option>
-          </select>
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-[12px] text-[#aaa]">{numCompetitors} competitors</span>
-            <input type="range" min={3} max={10} value={numCompetitors}
-              onChange={(e) => setNumCompetitors(Number(e.target.value))}
-              className="w-20 accent-[#1a1a1a] h-1" />
+        {/* Expandable settings */}
+        {showSettings && (
+          <div className="flex items-center gap-4 py-3 px-1 text-[13px]">
+            <div className="flex items-center gap-2">
+              <span className="text-[#aaa]">Goal</span>
+              <select value={goal} onChange={(e) => setGoal(e.target.value)}
+                className="bg-[#f5f5f5] border border-[#e0e0e0] rounded px-2 py-1 text-[12px] text-[#555] cursor-pointer">
+                <option value="leads">Leads</option>
+                <option value="awareness">Awareness</option>
+                <option value="product_info">Product Info</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[#aaa]">Competitors</span>
+              <input type="range" min={3} max={10} value={numCompetitors}
+                onChange={(e) => setNumCompetitors(Number(e.target.value))}
+                className="w-16 accent-[#1a1a1a] h-1" />
+              <span className="text-[#aaa] tabular-nums w-4">{numCompetitors}</span>
+            </div>
           </div>
-        </div>
+        )}
 
-        <button type="submit" disabled={loading}
-          className="bg-[#1a1a1a] text-[#fcfcfc] text-[13px] font-medium px-6 py-2.5 rounded-lg hover:bg-[#333] disabled:opacity-30 transition-colors">
-          {loading ? "Submitting..." : "Run Optimization"}
-        </button>
         {message && (
-          <span className={`ml-4 text-[13px] ${message.startsWith("Error") ? "text-red-500" : "text-[#888]"}`}>
+          <p className={`mt-2 text-[13px] ${message.startsWith("Error") ? "text-red-500" : "text-[#888]"}`}>
             {message}
-          </span>
+          </p>
         )}
       </form>
 
+      {/* Filter + Results */}
       <div className="flex items-center gap-3 mb-4">
         <p className="text-[13px] text-[#aaa]">History</p>
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}

@@ -14,19 +14,15 @@ class OptimizationJob(Base):
     id = Column(Integer, primary_key=True, index=True)
     url = Column(String, nullable=False, index=True)
     keyword = Column(String, nullable=True)
-    page_type_input = Column(String, nullable=True)  # landing | product | service
-    region = Column(String, nullable=True)
-    language = Column(String, nullable=True)
-    goal = Column(String, nullable=True)  # leads | awareness | product_info
+    goal = Column(String, nullable=True)
     num_competitors = Column(Integer, default=10)
     status = Column(String, nullable=False, default="pending", index=True)
     detected_intent = Column(String, nullable=True)
     page_type = Column(String, nullable=True)
+    region = Column(String, nullable=True)
+    language = Column(String, nullable=True)
     audit_result = Column(Text, nullable=True)
     optimized_html = Column(Text, nullable=True)
     competitor_urls = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     finished_at = Column(DateTime, nullable=True)
-
-    def __repr__(self):
-        return f"<OptimizationJob id={self.id} url={self.url} status={self.status}>"

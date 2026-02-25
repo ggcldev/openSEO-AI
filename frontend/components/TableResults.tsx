@@ -14,7 +14,7 @@ function Label({ children }: { children: React.ReactNode }) {
   return <p className="text-[11px] text-[#aaa] uppercase tracking-wider mb-2">{children}</p>;
 }
 
-function PackDetails({ audit, hasExport, jobId }: { audit: AuditResult; hasExport: boolean; jobId: number }) {
+function PackDetails({ audit, hasExport, jobId, item }: { audit: AuditResult; hasExport: boolean; jobId: number; item: HistoryItem }) {
   if (audit.parse_error) {
     return <pre className="text-[12px] text-[#888] whitespace-pre-wrap font-mono">{audit.raw_output}</pre>;
   }
@@ -38,6 +38,14 @@ function PackDetails({ audit, hasExport, jobId }: { audit: AuditResult; hasExpor
             <div>
               <Label>Effort</Label>
               <p className="text-[14px] text-[#444] capitalize">{audit.effort_level}</p>
+            </div>
+          )}
+          {item.page_type && (
+            <div>
+              <Label>Detected</Label>
+              <p className="text-[14px] text-[#444] capitalize">
+                {item.page_type} &middot; {item.region?.toUpperCase()} &middot; {item.language?.toUpperCase()}
+              </p>
             </div>
           )}
         </div>
@@ -216,7 +224,7 @@ export function TableResults({ items, onRefresh }: Props) {
                   onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
                   className="border-b border-[#f0f0f0] hover:bg-[#f8f8f8] cursor-pointer transition-colors">
                   <td className="px-4 py-3 text-[13px] text-[#1a1a1a] truncate max-w-[240px]">{item.url}</td>
-                  <td className="px-4 py-3 text-[13px] text-[#888] capitalize">{item.page_type_input || "\u2014"}</td>
+                  <td className="px-4 py-3 text-[13px] text-[#888] capitalize">{item.page_type || "\u2014"}</td>
                   <td className="px-4 py-3 text-[13px] text-[#1a1a1a] font-medium tabular-nums">
                     {audit && !audit.parse_error ? audit.overall_score : "\u2014"}
                   </td>
@@ -230,7 +238,7 @@ export function TableResults({ items, onRefresh }: Props) {
                 {expandedId === item.id && audit && (
                   <tr key={`${item.id}-pack`}>
                     <td colSpan={5} className="px-6 py-8 bg-[#f8f8f8] border-b border-[#f0f0f0]">
-                      <PackDetails audit={audit} hasExport={item.has_export} jobId={item.id} />
+                      <PackDetails audit={audit} hasExport={item.has_export} jobId={item.id} item={item} />
                     </td>
                   </tr>
                 )}
