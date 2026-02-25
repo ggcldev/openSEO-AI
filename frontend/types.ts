@@ -17,6 +17,8 @@ export interface HistoryItem {
   url: string;
   keyword: string;
   status: "pending" | "running" | "done" | "failed";
+  detected_intent: string | null;
+  page_type: string | null;
   audit_result: string | null;
   competitor_urls: string | null;
   has_export: boolean;

@@ -1,16 +1,19 @@
 """
 SEO Audit Agent — uses LangChain + Groq/Claude to produce
-a structured on-page SEO audit from scraped + analyzed data.
+a structured on-page SEO audit, tailored to the page's intent.
 """
 import json
 
 from langchain_core.prompts import PromptTemplate
 
 AUDIT_PROMPT = PromptTemplate(
-    input_variables=["keyword", "your_page", "serp_summary", "gaps"],
+    input_variables=["keyword", "intent", "page_type", "industry", "your_page", "serp_summary", "gaps"],
     template="""You are an expert SEO on-page auditor.
 
 Target keyword: {keyword}
+Page intent: {intent}
+Page type: {page_type}
+Industry: {industry}
 
 YOUR PAGE DATA:
 {your_page}
@@ -21,9 +24,34 @@ SERP TOP-10 COMPETITOR SUMMARY:
 COMPUTED GAPS:
 {gaps}
 
-Perform a full on-page SEO audit. Return ONLY valid JSON in this exact structure:
+INTENT-SPECIFIC AUDIT CRITERIA:
+
+If TRANSACTIONAL (service_page, product_page, landing_page):
+- Does the page have clear CTAs (call-to-action)?
+- Are there trust signals (testimonials, reviews, certifications, case studies)?
+- Is pricing or service packaging mentioned?
+- Is there clear contact info or a lead form?
+- Are service/product benefits clearly articulated?
+- Does the page address objections or FAQs?
+
+If INFORMATIONAL (blog_post):
+- Is the content comprehensive and in-depth?
+- Does it have proper heading hierarchy for scannability?
+- Are there internal links to related content?
+- Does it include FAQ or "People Also Ask" sections?
+- Is readability appropriate for the audience?
+
+If COMMERCIAL (category_page, comparison):
+- Are there comparison elements (tables, pros/cons)?
+- Are products/services clearly categorized?
+- Are there reviews or ratings?
+- Is pricing information present?
+
+Perform a full on-page SEO audit appropriate for this page type. Return ONLY valid JSON:
 {{
   "overall_score": <int 0-100>,
+  "detected_intent": "{intent}",
+  "detected_page_type": "{page_type}",
   "title_tag": {{
     "current": "<current title>",
     "status": "ok|needs_improvement|missing",
@@ -53,8 +81,7 @@ Perform a full on-page SEO audit. Return ONLY valid JSON in this exact structure
     "recommendation": "<specific suggestion>"
   }},
   "content_gaps": [
-    "<specific missing topic or entity 1>",
-    "<specific missing topic or entity 2>"
+    "<specific missing topic, element, or section>"
   ],
   "strengths": [
     "<what the page does well>"
@@ -62,12 +89,14 @@ Perform a full on-page SEO audit. Return ONLY valid JSON in this exact structure
   "recommendations": [
     {{
       "priority": <int 1-8>,
-      "type": "title|meta|heading|content|keyword|structure",
+      "type": "title|meta|heading|content|keyword|structure|cta|trust|pricing",
       "action": "<exactly what to do>",
       "rationale": "<why this matters for ranking>"
     }}
   ]
 }}
+
+IMPORTANT: Tailor your recommendations to the page type. A service page needs CTAs and trust signals, not "add more blog content". A blog needs depth and structure, not "add pricing".
 
 Return ONLY the JSON object. No markdown fences, no explanation."""
 )
@@ -79,20 +108,26 @@ def _truncate(text: str, max_chars: int = 8000) -> str:
     return text[:max_chars] + "\n[... truncated ...]"
 
 
-def run_seo_audit(llm, keyword: str, your_page: dict, competitor_pages: list[dict], gaps: dict) -> dict:
+def run_seo_audit(llm, keyword: str, your_page: dict, competitor_pages: list[dict], gaps: dict, intent_data: dict = None) -> dict:
     """
     Run the full SEO audit agent.
 
     Args:
-        llm:              LangChain LLM instance (Groq or Claude).
+        llm:              LangChain LLM instance.
         keyword:          Target keyword.
         your_page:        Scraped + analyzed data for user's page.
         competitor_pages: List of scraped + analyzed competitor pages.
         gaps:             Output of compute_gaps().
+        intent_data:      Output of detect_intent() — intent, page_type, industry.
 
     Returns:
-        Structured audit dict, or fallback with raw_output on parse error.
+        Structured audit dict.
     """
+    intent_data = intent_data or {}
+    intent = intent_data.get("intent", "informational")
+    page_type = intent_data.get("page_type", "blog_post")
+    industry = intent_data.get("industry", "general")
+
     # Format competitor summary
     serp_lines = []
     for i, p in enumerate(competitor_pages[:10], 1):
@@ -121,6 +156,9 @@ def run_seo_audit(llm, keyword: str, your_page: dict, competitor_pages: list[dic
     chain = AUDIT_PROMPT | llm
     result = chain.invoke({
         "keyword": keyword,
+        "intent": intent,
+        "page_type": page_type,
+        "industry": industry,
         "your_page": _truncate(your_page_str, 3000),
         "serp_summary": _truncate(serp_summary, 2000),
         "gaps": _truncate(gaps_str, 1500),

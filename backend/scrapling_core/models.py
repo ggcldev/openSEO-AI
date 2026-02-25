@@ -16,6 +16,8 @@ class OptimizationJob(Base):
     keyword = Column(String, nullable=True)
     num_competitors = Column(Integer, default=10)
     status = Column(String, nullable=False, default="pending", index=True)
+    detected_intent = Column(String, nullable=True)
+    page_type = Column(String, nullable=True)
     audit_result = Column(Text, nullable=True)
     optimized_html = Column(Text, nullable=True)
     competitor_urls = Column(Text, nullable=True)

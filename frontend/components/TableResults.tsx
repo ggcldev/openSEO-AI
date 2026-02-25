@@ -16,7 +16,7 @@ const statusLabel: Record<string, { text: string; color: string }> = {
   failed: { text: "Failed", color: "text-red-400" },
 };
 
-function AuditDetails({ audit, hasExport, jobId }: { audit: AuditResult; hasExport: boolean; jobId: number }) {
+function AuditDetails({ audit, hasExport, jobId, intent, pageType }: { audit: AuditResult; hasExport: boolean; jobId: number; intent?: string | null; pageType?: string | null }) {
   if (audit.parse_error) {
     return (
       <div>
@@ -30,9 +30,23 @@ function AuditDetails({ audit, hasExport, jobId }: { audit: AuditResult; hasExpo
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <p className="text-[11px] text-[#777] uppercase tracking-wider mb-1">Score</p>
-          <p className="text-[28px] font-semibold tracking-tight text-white leading-none">{audit.overall_score}</p>
+        <div className="flex items-center gap-6">
+          <div>
+            <p className="text-[11px] text-[#777] uppercase tracking-wider mb-1">Score</p>
+            <p className="text-[28px] font-semibold tracking-tight text-white leading-none">{audit.overall_score}</p>
+          </div>
+          {intent && (
+            <div>
+              <p className="text-[11px] text-[#777] uppercase tracking-wider mb-1">Intent</p>
+              <p className="text-[13px] text-white">{intent}</p>
+            </div>
+          )}
+          {pageType && (
+            <div>
+              <p className="text-[11px] text-[#777] uppercase tracking-wider mb-1">Page Type</p>
+              <p className="text-[13px] text-white">{pageType.replace(/_/g, " ")}</p>
+            </div>
+          )}
         </div>
         {hasExport && (
           <a
@@ -186,7 +200,7 @@ export function TableResults({ items, onRefresh }: TableResultsProps) {
                 {expandedId === item.id && audit && (
                   <tr key={`${item.id}-details`}>
                     <td colSpan={5} className="px-5 py-6 bg-[#161616] border-b border-[#1e1e1e]">
-                      <AuditDetails audit={audit} hasExport={item.has_export} jobId={item.id} />
+                      <AuditDetails audit={audit} hasExport={item.has_export} jobId={item.id} intent={item.detected_intent} pageType={item.page_type} />
                     </td>
                   </tr>
                 )}

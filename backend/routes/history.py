@@ -18,6 +18,8 @@ class HistoryItem(BaseModel):
     url: str
     keyword: str
     status: str
+    detected_intent: Optional[str] = None
+    page_type: Optional[str] = None
     audit_result: Optional[str] = None
     competitor_urls: Optional[str] = None
     has_export: bool = False
@@ -54,6 +56,8 @@ def list_history(
             url=j.url,
             keyword=j.keyword or "",
             status=j.status,
+            detected_intent=j.detected_intent,
+            page_type=j.page_type,
             audit_result=j.audit_result,
             competitor_urls=j.competitor_urls,
             has_export=bool(j.optimized_html),
