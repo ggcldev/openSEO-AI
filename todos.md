@@ -61,6 +61,7 @@
 - [ ] **TS-TYPE-5** Replace `as Node` assertion with `instanceof Node` guard in `dashboard/page.tsx:89` and `TableResults.tsx:65`
 - [ ] **TS-TYPE-6** Type `scheduleGoal` state as `"leads" | "awareness" | "product_info"` to remove `as` assertion in `dashboard/page.tsx:159`
 - [ ] **TS-TYPE-7** Add `Number.isNaN` guard for `Number(e.target.value)` in `dashboard/page.tsx:357,367`
+- [ ] **TS-TYPE-8** Add null guard for `change_summary.keep` and `change_summary.change` access in `TableResults.tsx:358` — backend could omit these properties
 
 ## Phase 3: Performance (HIGH — Fix This Sprint)
 
@@ -72,6 +73,7 @@
 - [ ] **TS-PERF-6** Replace `setTimeout(() => fetchHistory(), 1500)` (4 occurrences) with optimistic updates or poll-until-found
 - [ ] **TS-PERF-7** Add virtualization for history table — renders all 200 rows as DOM nodes simultaneously
 - [ ] **TS-PERF-8** Reuse single `DOMParser` instance — currently created multiple times per render in `HtmlEditorPanel.tsx`
+- [ ] **TS-PERF-9** Fix `secondaryKeywords` useMemo — `audit?.keywords?.secondary` is a new array ref on every contextItem change, causing unnecessary recomputation in `HtmlEditorPanel.tsx:511-518`
 
 ## Phase 4: Error Handling (MEDIUM)
 
@@ -92,6 +94,9 @@
 - [ ] **TS-QUAL-6** Fix `||` to `?? 0 > 0` for `.length` checks in `TableResults.tsx:338` (falsy when length is 0)
 - [ ] **TS-QUAL-7** Replace `<a href>` with Next.js `<Link>` for internal navigation in `layout.tsx:15-19`
 - [ ] **TS-QUAL-8** Extract repeated error handling pattern into shared utility function (used 8 times in `dashboard/page.tsx`)
+- [ ] **TS-QUAL-9** Group related state into `useReducer` — dashboard has 33 `useState` hooks, schedule form fields should be a single state object
+- [ ] **TS-QUAL-10** Add dependency injection for API client — current module-level singleton with hardcoded `fetch` makes testing difficult
+- [ ] **TS-QUAL-11** Remove unnecessary `Fragment` import — use JSX shorthand `<>...</>` instead in `TableResults.tsx:3`
 
 ## Phase 6: Configuration & Build (MEDIUM)
 
