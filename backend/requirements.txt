@@ -3,6 +3,7 @@ uvicorn[standard]
 scrapling
 playwright
 sqlalchemy
+psycopg[binary]
 pydantic
 googlesearch-python
 langchain-core

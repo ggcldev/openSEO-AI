@@ -1,25 +1,29 @@
 """
-POST /api/optimize — Submit an SEO optimization job.
+Scan / optimize routes.
 """
-import asyncio
-import json
-from datetime import datetime, timezone
+from enum import Enum
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, HttpUrl
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field, HttpUrl
 
-from database import get_db
-from scrapling_core.models import OptimizationJob
+from config import llm_config_error
+from job_service import create_optimization_job, queue_existing_job_for_optimize
+from scrapling_core.url_policy import validate_target_url
 
 router = APIRouter()
+
+
+class Goal(str, Enum):
+    leads = "leads"
+    awareness = "awareness"
+    product_info = "product_info"
 
 
 class OptimizeRequest(BaseModel):
     url: HttpUrl
     keyword: str = ""
-    goal: str = "leads"
-    num_competitors: int = 10
+    goal: Goal = Goal.leads
+    num_competitors: int = Field(default=10, ge=3, le=20)
 
 
 class OptimizeResponse(BaseModel):
@@ -27,135 +31,90 @@ class OptimizeResponse(BaseModel):
     url: str
     keyword: str
     status: str
+    pipeline_mode: str
     message: str
 
 
-@router.post("/optimize", response_model=OptimizeResponse)
-async def submit_optimization(req: OptimizeRequest, db: Session = Depends(get_db)):
-    job = OptimizationJob(
-        url=str(req.url),
-        keyword=req.keyword or "",
-        goal=req.goal,
-        num_competitors=req.num_competitors,
-        status="pending",
-        created_at=datetime.now(timezone.utc),
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-
-    asyncio.create_task(_run_optimization(
-        job.id, str(req.url), req.keyword, req.goal, req.num_competitors,
-    ))
-
-    return OptimizeResponse(
-        id=job.id, url=job.url, keyword=job.keyword,
-        status="pending", message="Optimization job submitted.",
-    )
-
-
-async def _run_optimization(
-    job_id: int, url: str, keyword: str, goal: str, num_competitors: int,
-):
-    from database import SessionLocal
-
-    db = SessionLocal()
+def _validate_url(req: OptimizeRequest) -> None:
     try:
-        job = db.query(OptimizationJob).filter(OptimizationJob.id == job_id).first()
-        if not job:
-            return
+        validate_target_url(str(req.url))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        job.status = "running"
-        db.commit()
 
-        result = await asyncio.to_thread(
-            _run_pipeline, url, keyword, goal, num_competitors,
+def _ensure_llm_configured() -> None:
+    config_error = llm_config_error()
+    if config_error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"LLM configuration is missing: {config_error}",
         )
 
-        intent_data = result.get("intent_data", {})
-        job.status = "done"
-        job.detected_intent = intent_data.get("intent", "")
-        job.page_type = intent_data.get("page_type", "")
-        job.region = intent_data.get("region", "")
-        job.language = intent_data.get("language", "")
-        job.audit_result = json.dumps(result.get("audit", {}), ensure_ascii=False)
-        job.optimized_html = result.get("optimized_html", "")
-        job.competitor_urls = json.dumps(result.get("competitor_urls", []))
-        job.finished_at = datetime.now(timezone.utc)
-        db.commit()
 
-    except Exception as e:
-        job.status = "failed"
-        job.audit_result = json.dumps({"error": str(e)})
-        job.finished_at = datetime.now(timezone.utc)
-        db.commit()
-    finally:
-        db.close()
+@router.post("/scan", response_model=OptimizeResponse)
+async def submit_scan(req: OptimizeRequest):
+    _validate_url(req)
+    _ensure_llm_configured()
 
-
-def _run_pipeline(url: str, keyword: str, goal: str, num_competitors: int) -> dict:
-    from scrapling_core.engine import scrape_page, scrape_pages_parallel
-    from scrapling_core.serp import get_serp_urls
-    from scrapling_core.analyzer import analyze_content, compute_gaps
-    from scrapling_core.intent_detector import detect_intent
-    from scrapling_core.seo_agent import run_seo_audit
-    from scrapling_core.editor_agent import run_editor
-    from config import get_llm
-
-    llm = get_llm()
-
-    # 1. Scrape
-    your_page = scrape_page(url)
-
-    # 2. Auto-detect intent, page type, region, language
-    intent_data = detect_intent(llm, your_page)
-
-    # 3. SERP
-    competitor_urls = []
-    serp_query = intent_data.get("serp_query") or keyword
-    if serp_query:
-        try:
-            serp_urls = get_serp_urls(serp_query, num=num_competitors + 2)
-            competitor_urls = [u for u in serp_urls if url not in u][:num_competitors]
-        except Exception:
-            competitor_urls = []
-
-    # 4. Scrape competitors
-    competitor_pages = scrape_pages_parallel(competitor_urls) if competitor_urls else []
-
-    # 5. Analyze
-    effective_keyword = keyword or intent_data.get("industry", "")
-    your_analysis = {**your_page, **analyze_content(your_page.get("body_text", ""), effective_keyword)}
-    competitor_analyses = [
-        {**page, **analyze_content(page.get("body_text", ""), effective_keyword)}
-        for page in competitor_pages
-    ]
-    gaps = compute_gaps(your_analysis, competitor_analyses)
-
-    # 6. Optimization Pack
-    audit = run_seo_audit(
-        llm, keyword=effective_keyword or "(auto-detected)",
-        your_page=your_analysis, competitor_pages=competitor_analyses,
-        gaps=gaps, intent_data=intent_data,
-        region=intent_data.get("region", "global"),
-        language=intent_data.get("language", "en"),
-        goal=goal,
+    job = create_optimization_job(
+        url=str(req.url),
+        keyword=req.keyword,
+        goal=req.goal.value,
+        num_competitors=req.num_competitors,
+        pipeline_mode="scan",
+        schedule_id=None,
     )
 
-    # 7. Optimized HTML
-    optimized_html = ""
-    if not audit.get("parse_error"):
-        try:
-            optimized_html = run_editor(
-                llm, keyword=effective_keyword or "(auto-detected)",
-                original_text=your_page.get("body_text", ""),
-                title=your_page.get("title", ""),
-                audit=audit, intent_data=intent_data,
-            )
-        except Exception:
-            optimized_html = ""
+    return OptimizeResponse(
+        id=job.id,
+        url=job.url,
+        keyword=job.keyword,
+        status="pending",
+        pipeline_mode="scan",
+        message="Scan job submitted.",
+    )
 
-    return {
-        "audit": audit, "optimized_html": optimized_html,
-        "competitor_urls": competitor_urls, "intent_data": intent_data, "gaps": gaps,
-    }
+
+@router.post("/optimize", response_model=OptimizeResponse)
+async def submit_full_optimization(req: OptimizeRequest):
+    _validate_url(req)
+    _ensure_llm_configured()
+
+    job = create_optimization_job(
+        url=str(req.url),
+        keyword=req.keyword,
+        goal=req.goal.value,
+        num_competitors=req.num_competitors,
+        pipeline_mode="full",
+        schedule_id=None,
+    )
+
+    return OptimizeResponse(
+        id=job.id,
+        url=job.url,
+        keyword=job.keyword,
+        status="pending",
+        pipeline_mode="full",
+        message="Full optimization job submitted.",
+    )
+
+
+@router.post("/optimize/{job_id}", response_model=OptimizeResponse)
+async def optimize_existing_job(job_id: int):
+    _ensure_llm_configured()
+
+    try:
+        job = queue_existing_job_for_optimize(job_id)
+    except ValueError as exc:
+        detail = str(exc)
+        code = 404 if detail == "Job not found." else 400
+        raise HTTPException(status_code=code, detail=detail) from exc
+
+    return OptimizeResponse(
+        id=job.id,
+        url=job.url,
+        keyword=job.keyword or "",
+        status=job.status,
+        pipeline_mode="optimize",
+        message="Optimization phase queued.",
+    )

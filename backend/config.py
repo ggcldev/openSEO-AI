@@ -7,8 +7,24 @@ Default: Groq (free tier).
 import os
 
 
+def llm_provider() -> str:
+    return os.getenv("LLM_PROVIDER", "groq").lower().strip()
+
+
+def llm_config_error() -> str:
+    provider = llm_provider()
+    if provider == "claude":
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            return "ANTHROPIC_API_KEY is not set."
+        return ""
+
+    if not os.getenv("GROQ_API_KEY"):
+        return "GROQ_API_KEY is not set."
+    return ""
+
+
 def get_llm():
-    provider = os.getenv("LLM_PROVIDER", "groq").lower()
+    provider = llm_provider()
 
     if provider == "claude":
         from langchain_anthropic import ChatAnthropic

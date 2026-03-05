@@ -1,10 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { HistoryItem, AuditResult } from "@/types";
-import { getExportUrl } from "@/lib/apiClient";
+import { getExportUrl, getSourceExportUrl } from "@/lib/apiClient";
 
-interface Props { items: HistoryItem[]; onRefresh: () => void; }
+interface Props {
+  items: HistoryItem[];
+  onOpenEditor: (jobId: number) => void;
+  onOpenDetails: (jobId: number) => void;
+  onOptimizeJob: (jobId: number) => void;
+  optimizingJobId: number | null;
+}
 
 const statusColor: Record<string, string> = {
   pending: "text-[#aaa]", running: "text-[#1a1a1a]", done: "text-[#888]", failed: "text-red-500",
@@ -14,13 +20,147 @@ function Label({ children }: { children: React.ReactNode }) {
   return <p className="text-[11px] text-[#aaa] uppercase tracking-wider mb-2">{children}</p>;
 }
 
-function PackDetails({ audit, hasExport, jobId, item }: { audit: AuditResult; hasExport: boolean; jobId: number; item: HistoryItem }) {
+function PackDetails({
+  audit,
+  jobId,
+  item,
+  onOpenEditor,
+  onOpenDetails,
+  onOptimizeJob,
+  optimizingJobId,
+}: {
+  audit: AuditResult;
+  jobId: number;
+  item: HistoryItem;
+  onOpenEditor: (jobId: number) => void;
+  onOpenDetails: (jobId: number) => void;
+  onOptimizeJob: (jobId: number) => void;
+  optimizingJobId: number | null;
+}) {
+  const [showMoreActions, setShowMoreActions] = useState(false);
+  const moreActionsRef = useRef<HTMLDivElement | null>(null);
+  const isBusy = item.status === "pending" || item.status === "running";
+  const isOptimizing = optimizingJobId === jobId;
+  const canOpenEditor = item.has_source_html || item.has_export;
+  const canOptimize = item.can_optimize;
+
+  const primaryAction = canOpenEditor ? "open_editor" : canOptimize ? "optimize" : "view_details";
+  const primaryLabel =
+    primaryAction === "open_editor"
+      ? "Open Editor"
+      : primaryAction === "optimize"
+        ? isOptimizing
+          ? "Optimizing..."
+          : item.has_export
+            ? "Refresh Optimization"
+            : "Optimize Page"
+        : "View Details";
+  const primaryDisabled = primaryAction === "optimize" ? isBusy || isOptimizing : false;
+
+  useEffect(() => {
+    if (!showMoreActions) return;
+
+    function onPointerDown(event: MouseEvent) {
+      if (!moreActionsRef.current) return;
+      if (moreActionsRef.current.contains(event.target as Node)) return;
+      setShowMoreActions(false);
+    }
+
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setShowMoreActions(false);
+    }
+
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onEscape);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onEscape);
+    };
+  }, [showMoreActions]);
+
+  function runPrimaryAction(event: React.MouseEvent) {
+    event.stopPropagation();
+    if (primaryAction === "open_editor") {
+      onOpenEditor(jobId);
+      return;
+    }
+    if (primaryAction === "optimize") {
+      onOptimizeJob(jobId);
+      return;
+    }
+    onOpenDetails(jobId);
+  }
+
   if (audit.parse_error) {
-    return <pre className="text-[12px] text-[#888] whitespace-pre-wrap font-mono">{audit.raw_output}</pre>;
+    return (
+      <div className="space-y-4">
+        <p className="text-[13px] text-[#666]">
+          Audit insights are not available for this run. You can still open the editor or view job details.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={runPrimaryAction}
+            disabled={primaryDisabled}
+            className="bg-[#1a1a1a] text-white text-[13px] px-4 py-2 rounded-lg hover:bg-[#333] disabled:opacity-40"
+          >
+            {primaryLabel}
+          </button>
+          <div ref={moreActionsRef} className="relative">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMoreActions((v) => !v);
+              }}
+              className="border border-[#ddd] text-[#444] text-[13px] px-3 py-2 rounded-lg hover:border-[#bbb]"
+            >
+              Actions
+            </button>
+            {showMoreActions && (
+              <div className="absolute left-0 top-[calc(100%+8px)] z-10 min-w-[170px] rounded-lg border border-[#e6e6e6] bg-white shadow-lg p-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMoreActions(false);
+                    onOpenDetails(jobId);
+                  }}
+                  className="w-full text-left text-[12px] px-2.5 py-2 rounded hover:bg-[#f5f5f5]"
+                >
+                  View Details
+                </button>
+                {item.has_source_html && (
+                  <a
+                    href={getSourceExportUrl(jobId)}
+                    download
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowMoreActions(false);
+                    }}
+                    className="block text-[12px] px-2.5 py-2 rounded hover:bg-[#f5f5f5] text-[#333]"
+                  >
+                    Download Source
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-8">
+      {item.status === "failed" && item.error_message && (
+        <div className="border border-red-200 bg-red-50 rounded-lg px-4 py-3">
+          <p className="text-[12px] text-red-700">
+            Failed at {item.error_stage || "pipeline"} ({item.error_code || "unknown"}): {item.error_message}
+          </p>
+        </div>
+      )}
+
       {/* Top bar */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-8">
@@ -28,36 +168,93 @@ function PackDetails({ audit, hasExport, jobId, item }: { audit: AuditResult; ha
             <Label>Score</Label>
             <p className="text-[26px] font-semibold text-[#1a1a1a] leading-none">{audit.overall_score}</p>
           </div>
-          {audit.priority_action && (
-            <div>
-              <Label>Action</Label>
-              <p className="text-[14px] text-[#444] capitalize">{audit.priority_action.replace(/_/g, " ")}</p>
-            </div>
-          )}
-          {audit.effort_level && (
-            <div>
-              <Label>Effort</Label>
-              <p className="text-[14px] text-[#444] capitalize">{audit.effort_level}</p>
-            </div>
-          )}
           {item.page_type && (
             <div>
-              <Label>Detected</Label>
+              <Label>Page Type</Label>
               <p className="text-[14px] text-[#444] capitalize">
-                {item.page_type} &middot; {item.region?.toUpperCase()} &middot; {item.language?.toUpperCase()}
+                {item.page_type}
               </p>
             </div>
           )}
         </div>
-        {hasExport && (
-          <a href={getExportUrl(jobId)} download onClick={(e) => e.stopPropagation()}
-            className="border border-[#ddd] text-[#444] text-[13px] px-4 py-2 rounded-lg hover:text-[#1a1a1a] hover:border-[#bbb] transition-colors inline-flex items-center gap-2">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            Download HTML
-          </a>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={runPrimaryAction}
+            disabled={primaryDisabled}
+            className="bg-[#1a1a1a] text-white text-[13px] px-4 py-2 rounded-lg hover:bg-[#333] disabled:opacity-40"
+          >
+            {primaryLabel}
+          </button>
+
+          <div ref={moreActionsRef} className="relative">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMoreActions((v) => !v);
+              }}
+              className="border border-[#ddd] text-[#444] text-[13px] px-3 py-2 rounded-lg hover:border-[#bbb]"
+            >
+              Actions
+            </button>
+            {showMoreActions && (
+              <div className="absolute right-0 top-[calc(100%+8px)] z-10 min-w-[190px] rounded-lg border border-[#e6e6e6] bg-white shadow-lg p-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowMoreActions(false);
+                    onOpenDetails(jobId);
+                  }}
+                  className="w-full text-left text-[12px] px-2.5 py-2 rounded hover:bg-[#f5f5f5]"
+                >
+                  View Details
+                </button>
+                {canOptimize && primaryAction !== "optimize" && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowMoreActions(false);
+                      onOptimizeJob(jobId);
+                    }}
+                    disabled={isBusy || isOptimizing}
+                    className="w-full text-left text-[12px] px-2.5 py-2 rounded hover:bg-[#f5f5f5] disabled:opacity-40"
+                  >
+                    {isOptimizing ? "Optimizing..." : item.has_export ? "Refresh Optimization" : "Optimize Page"}
+                  </button>
+                )}
+                {item.has_source_html && (
+                  <a
+                    href={getSourceExportUrl(jobId)}
+                    download
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowMoreActions(false);
+                    }}
+                    className="block text-[12px] px-2.5 py-2 rounded hover:bg-[#f5f5f5] text-[#333]"
+                  >
+                    Download Source
+                  </a>
+                )}
+                {item.has_export && (
+                  <a
+                    href={getExportUrl(jobId)}
+                    download
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowMoreActions(false);
+                    }}
+                    className="block text-[12px] px-2.5 py-2 rounded hover:bg-[#f5f5f5] text-[#333]"
+                  >
+                    Export HTML
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Keywords */}
@@ -178,7 +375,7 @@ function PackDetails({ audit, hasExport, jobId, item }: { audit: AuditResult; ha
         <div>
           <Label>Checklist</Label>
           <div className="space-y-2">
-            {audit.checklist.sort((a, b) => a.priority - b.priority).map((item, i) => (
+            {[...audit.checklist].sort((a, b) => a.priority - b.priority).map((item, i) => (
               <div key={i} className="flex gap-3 py-2">
                 <span className="text-[12px] text-[#bbb] tabular-nums w-4 shrink-0">{item.priority}.</span>
                 <div>
@@ -194,7 +391,13 @@ function PackDetails({ audit, hasExport, jobId, item }: { audit: AuditResult; ha
   );
 }
 
-export function TableResults({ items, onRefresh }: Props) {
+export function TableResults({
+  items,
+  onOpenEditor,
+  onOpenDetails,
+  onOptimizeJob,
+  optimizingJobId,
+}: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   if (items.length === 0) {
@@ -219,7 +422,7 @@ export function TableResults({ items, onRefresh }: Props) {
             if (item.audit_result) { try { audit = JSON.parse(item.audit_result); } catch {} }
 
             return (
-              <>
+              <Fragment key={item.id}>
                 <tr key={item.id}
                   onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
                   className="border-b border-[#f0f0f0] hover:bg-[#f8f8f8] cursor-pointer transition-colors">
@@ -238,11 +441,19 @@ export function TableResults({ items, onRefresh }: Props) {
                 {expandedId === item.id && audit && (
                   <tr key={`${item.id}-pack`}>
                     <td colSpan={5} className="px-6 py-8 bg-[#f8f8f8] border-b border-[#f0f0f0]">
-                      <PackDetails audit={audit} hasExport={item.has_export} jobId={item.id} item={item} />
+                      <PackDetails
+                        audit={audit}
+                        jobId={item.id}
+                        item={item}
+                        onOpenEditor={onOpenEditor}
+                        onOpenDetails={onOpenDetails}
+                        onOptimizeJob={onOptimizeJob}
+                        optimizingJobId={optimizingJobId}
+                      />
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             );
           })}
         </tbody>

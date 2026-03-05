@@ -3,7 +3,7 @@ GET /api/export/{job_id} — Download optimized HTML for a completed job.
 """
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -22,12 +22,27 @@ def _slugify(text: str) -> str:
 
 
 @router.get("/export/{job_id}")
-def export_html(job_id: int, db: Session = Depends(get_db)):
+def export_html(
+    job_id: int,
+    version: str = Query(default="optimized", pattern="^(optimized|source)$"),
+    db: Session = Depends(get_db),
+):
     """Download the optimized HTML content for a completed job."""
     job = db.query(OptimizationJob).filter(OptimizationJob.id == job_id).first()
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    if version == "source":
+        if not job.source_html:
+            raise HTTPException(status_code=404, detail="No source HTML available for this job")
+        slug = _slugify(job.keyword) if job.keyword else _slugify(job.url.split("//")[-1].split("/")[0])
+        filename = f"{slug}-source.html"
+        return Response(
+            content=job.source_html,
+            media_type="text/html",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     if job.status != "done":
         raise HTTPException(status_code=400, detail="Job is not completed yet")

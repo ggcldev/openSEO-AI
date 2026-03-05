@@ -1,0 +1,95 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: openseo-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-openseo}
+      POSTGRES_USER: ${POSTGRES_USER:-openseo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openseo}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openseo} -d ${POSTGRES_DB:-openseo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: openseo-backend-api
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://openseo:openseo@postgres:5432/openseo}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      JOB_MAX_RETRIES: ${JOB_MAX_RETRIES:-2}
+      JOB_RETRY_INITIAL_SECONDS: ${JOB_RETRY_INITIAL_SECONDS:-60}
+      JOB_RETRY_MAX_SECONDS: ${JOB_RETRY_MAX_SECONDS:-900}
+      SLO_SCRAPE_SUCCESS_TARGET: ${SLO_SCRAPE_SUCCESS_TARGET:-99.5}
+      SLO_JOB_SUCCESS_TARGET: ${SLO_JOB_SUCCESS_TARGET:-99.0}
+      SLO_P95_MINUTES_TARGET: ${SLO_P95_MINUTES_TARGET:-15}
+      WORKER_STALE_SECONDS: ${WORKER_STALE_SECONDS:-90}
+      STALE_RUNNING_SECONDS: ${STALE_RUNNING_SECONDS:-1800}
+      EMBEDDED_WORKER_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: openseo-worker
+    command:
+      [
+        "python",
+        "worker.py",
+        "--poll-seconds",
+        "2",
+        "--schedule-check-seconds",
+        "30",
+        "--heartbeat-seconds",
+        "15",
+        "--stale-running-seconds",
+        "${STALE_RUNNING_SECONDS:-1800}",
+        "--recovery-check-seconds",
+        "60"
+      ]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://openseo:openseo@postgres:5432/openseo}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      JOB_MAX_RETRIES: ${JOB_MAX_RETRIES:-2}
+      JOB_RETRY_INITIAL_SECONDS: ${JOB_RETRY_INITIAL_SECONDS:-60}
+      JOB_RETRY_MAX_SECONDS: ${JOB_RETRY_MAX_SECONDS:-900}
+      WORKER_STALE_SECONDS: ${WORKER_STALE_SECONDS:-90}
+      STALE_RUNNING_SECONDS: ${STALE_RUNNING_SECONDS:-1800}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend-api:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: openseo-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      backend-api:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
