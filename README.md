@@ -271,6 +271,27 @@ Response includes:
 - top failure codes and domains
 - in-app reliability notifications (no external channel integration)
 
+## Performance Audit Toolkit
+
+The repository includes reproducible benchmark and stress harnesses under `backend/perf/`.
+
+Quick examples:
+
+```bash
+cd backend
+python perf/audit_suite.py api-latency --iterations 120
+python perf/audit_suite.py race-claim --workers 8 --jobs 500
+python perf/audit_suite.py bulk-stress --rows 2000
+python perf/audit_suite.py db-pool --concurrency 64
+```
+
+Frontend bundle report:
+
+```bash
+cd frontend
+npm run build:bundle-report
+```
+
 ## Roadmap
 
 - [x] Scheduled / recurring audits

@@ -1,0 +1,91 @@
+{
+  "generated_at": "2026-03-06T07:24:17.116Z",
+  "file_count": 21,
+  "total_bytes": 1001663,
+  "largest_files": [
+    {
+      "file": "static/chunks/framework-de98b93a850cfc71.js",
+      "bytes": 189765
+    },
+    {
+      "file": "static/chunks/4bd1b696-c023c6e3521b1417.js",
+      "bytes": 173019
+    },
+    {
+      "file": "static/chunks/255-ebd51be49873d76c.js",
+      "bytes": 172500
+    },
+    {
+      "file": "static/chunks/main-889d81fc44c159ed.js",
+      "bytes": 136569
+    },
+    {
+      "file": "static/chunks/536-bc8fb7a78fc671ad.js",
+      "bytes": 98195
+    },
+    {
+      "file": "static/chunks/852-26d582fb13b41f73.js",
+      "bytes": 79536
+    },
+    {
+      "file": "static/chunks/app/dashboard/page-a3f0215821f6d813.js",
+      "bytes": 38092
+    },
+    {
+      "file": "static/chunks/app/editor/[jobId]/page-c32c441ecce803b1.js",
+      "bytes": 36371
+    },
+    {
+      "file": "static/css/7dc9de435cbb18be.css",
+      "bytes": 27465
+    },
+    {
+      "file": "static/chunks/586-fed60f58f3c2b13c.js",
+      "bytes": 22677
+    },
+    {
+      "file": "static/chunks/327-12625a66ba525802.js",
+      "bytes": 9293
+    },
+    {
+      "file": "static/chunks/619-ba102abea3e3d0e4.js",
+      "bytes": 8537
+    },
+    {
+      "file": "static/chunks/webpack-74c939c87fa0092a.js",
+      "bytes": 3404
+    },
+    {
+      "file": "static/chunks/app/_not-found/page-5e3411c8e61bc241.js",
+      "bytes": 2670
+    },
+    {
+      "file": "static/chunks/app/layout-27ae38aecb4c50a3.js",
+      "bytes": 1660
+    },
+    {
+      "file": "static/ivgKVgXf62D4v8-ePbw_Z/_buildManifest.js",
+      "bytes": 638
+    },
+    {
+      "file": "static/chunks/main-app-30a0c284094c3694.js",
+      "bytes": 557
+    },
+    {
+      "file": "static/chunks/pages/_app-7d307437aca18ad4.js",
+      "bytes": 234
+    },
+    {
+      "file": "static/chunks/pages/_error-cb2a52f75f2162e2.js",
+      "bytes": 218
+    },
+    {
+      "file": "static/chunks/app/page-6556c23e8414dba2.js",
+      "bytes": 183
+    },
+    {
+      "file": "static/ivgKVgXf62D4v8-ePbw_Z/_ssgManifest.js",
+      "bytes": 80
+    }
+  ]
+}

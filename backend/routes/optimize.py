@@ -52,7 +52,7 @@ def _ensure_llm_configured() -> None:
 
 
 @router.post("/scan", response_model=OptimizeResponse)
-async def submit_scan(req: OptimizeRequest):
+def submit_scan(req: OptimizeRequest):
     _validate_url(req)
     _ensure_llm_configured()
 
@@ -76,7 +76,7 @@ async def submit_scan(req: OptimizeRequest):
 
 
 @router.post("/optimize", response_model=OptimizeResponse)
-async def submit_full_optimization(req: OptimizeRequest):
+def submit_full_optimization(req: OptimizeRequest):
     _validate_url(req)
     _ensure_llm_configured()
 
@@ -100,7 +100,7 @@ async def submit_full_optimization(req: OptimizeRequest):
 
 
 @router.post("/optimize/{job_id}", response_model=OptimizeResponse)
-async def optimize_existing_job(job_id: int):
+def optimize_existing_job(job_id: int):
     _ensure_llm_configured()
 
     try:

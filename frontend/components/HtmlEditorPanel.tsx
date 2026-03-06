@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { EditorCanvas } from "@/components/editor/EditorCanvas";
+import { EditorToolbar } from "@/components/editor/EditorToolbar";
+import { MetaFieldsPanel } from "@/components/editor/MetaFieldsPanel";
+import { SeoSignalsSidebar } from "@/components/editor/SeoSignalsSidebar";
+import type { SeoSignal, SideTab, SignalStatus, TermSignal, TermStatus } from "@/components/editor/types";
 import {
   getEditorDocument,
   getExportUrl,
@@ -10,7 +14,21 @@ import {
   optimizeExistingJob,
   saveEditorDocument,
 } from "@/lib/apiClient";
-import type { AuditResult, EditorDocument, HistoryItem } from "@/types";
+import { parseAuditResult } from "@/lib/auditResult";
+import { sanitizeEditorHtml } from "@/lib/htmlSanitizer";
+import { AUTO_OPTIMIZE_MAX_POLLS, AUTO_OPTIMIZE_POLL_MS, EDITOR_DEFAULT_TARGET_WORDS, EDITOR_STATS_DEBOUNCE_MS } from "@/lib/constants";
+import {
+  applyHeadMeta,
+  extractHeadMeta,
+  mergeHtmlDocument,
+  normalizeText,
+  splitHtmlDocument,
+  stripHtml,
+  stripPageChrome,
+} from "@/lib/htmlUtils";
+import type { HtmlTemplate } from "@/lib/htmlUtils";
+import { collectEditorStats, countKeyword } from "@/lib/seoAnalysis";
+import type { EditorDocument, HistoryItem } from "@/types";
 
 interface Props {
   jobId: number | null;
@@ -20,410 +38,10 @@ interface Props {
   onClose: () => void;
 }
 
-interface HtmlTemplate {
-  prefix: string;
-  suffix: string;
-}
-
-type SignalStatus = "pass" | "warn" | "fail";
-type TermStatus = "low" | "good" | "high";
-type SideTab = "guidelines" | "facts" | "outline";
-
-interface SeoSignal {
-  key: string;
-  label: string;
-  status: SignalStatus;
-  score: number;
-  maxScore: number;
-  detail: string;
-  recommendation: string;
-}
-
-interface EditorStats {
-  textContent: string;
-  wordCount: number;
-  headingCount: number;
-  paragraphCount: number;
-  faqCount: number;
-  ctaCount: number;
-  imageCount: number;
-}
-
-interface TermSignal {
-  term: string;
-  count: number;
-  min: number;
-  max: number;
-  status: TermStatus;
-}
-
-interface ToolbarButtonProps {
-  label: ReactNode;
-  title: string;
-  onClick: () => void;
-  disabled?: boolean;
-}
-
-function ToolbarButton({ label, title, onClick, disabled }: ToolbarButtonProps) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex items-center justify-center min-w-[32px] h-8 px-2 rounded-md border border-[#e4e5ee] bg-white text-[11px] font-semibold text-[#484b60] hover:border-[#cccedc] hover:bg-[#fafbff] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-    >
-      {label}
-    </button>
-  );
-}
-
-function parseAudit(auditResult: string | null | undefined): AuditResult | null {
-  if (!auditResult) return null;
-  try {
-    return JSON.parse(auditResult) as AuditResult;
-  } catch {
-    return null;
-  }
-}
-
-function splitHtmlDocument(rawHtml: string): { template: HtmlTemplate; editableHtml: string } {
-  const openMatch = /<body[^>]*>/i.exec(rawHtml);
-  if (!openMatch || openMatch.index === undefined) {
-    return { template: { prefix: "", suffix: "" }, editableHtml: rawHtml };
-  }
-
-  const openEnd = openMatch.index + openMatch[0].length;
-  const closeMatch = /<\/body>/i.exec(rawHtml.slice(openEnd));
-  if (!closeMatch || closeMatch.index === undefined) {
-    return { template: { prefix: "", suffix: "" }, editableHtml: rawHtml };
-  }
-
-  const closeStart = openEnd + closeMatch.index;
-  return {
-    template: {
-      prefix: rawHtml.slice(0, openEnd),
-      suffix: rawHtml.slice(closeStart),
-    },
-    editableHtml: rawHtml.slice(openEnd, closeStart),
-  };
-}
-
-function mergeHtmlDocument(template: HtmlTemplate, editableHtml: string): string {
-  if (!template.prefix && !template.suffix) return editableHtml;
-  return `${template.prefix}${editableHtml}${template.suffix}`;
-}
-
-function normalizeText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function linkTextLength(root: ParentNode): number {
-  return Array.from(root.querySelectorAll("a"))
-    .map((node) => normalizeText(node.textContent || "").length)
-    .reduce((sum, value) => sum + value, 0);
-}
-
-function stripPageChrome(editableHtml: string): string {
-  if (!editableHtml.trim() || typeof DOMParser === "undefined") {
-    return editableHtml;
-  }
-
-  const parser = new DOMParser();
-  const parsed = parser.parseFromString(`<!doctype html><html><body>${editableHtml}</body></html>`, "text/html");
-  const body = parsed.body;
-
-  body.querySelectorAll("script,style,noscript,template,iframe").forEach((node) => node.remove());
-
-  const hardRemove =
-    "header,nav,footer,aside,[role='navigation'],[role='banner'],[role='contentinfo']," +
-    ".breadcrumb,.breadcrumbs,.site-header,.site-footer,.top-nav,.main-nav,.footer-links,.toc,.table-of-contents";
-  body.querySelectorAll(hardRemove).forEach((node) => node.remove());
-
-  const chromePattern = /(^|[-_])(nav|menu|footer|header|breadcrumb|cookie|sidebar|social|newsletter)([-_]|$)/i;
-  body.querySelectorAll<HTMLElement>("[class],[id]").forEach((node) => {
-    const classValue = node.getAttribute("class") || "";
-    const idValue = node.getAttribute("id") || "";
-    if (chromePattern.test(classValue) || chromePattern.test(idValue)) {
-      node.remove();
-    }
-  });
-
-  let contentRoot =
-    body.querySelector<HTMLElement>(
-      "main,article,[role='main'],#main,#content,.main-content,.content-area,.post-content,.entry-content",
-    ) || null;
-
-  if (!contentRoot) {
-    let best: HTMLElement | null = null;
-    let bestScore = 0;
-
-    body.querySelectorAll<HTMLElement>("article,main,section,div").forEach((node) => {
-      const text = normalizeText(node.textContent || "");
-      if (text.length < 240) return;
-
-      const paragraphCount = node.querySelectorAll("p").length;
-      const linkDensity = text.length > 0 ? linkTextLength(node) / text.length : 0;
-      const score = text.length + paragraphCount * 220 - linkDensity * 1200;
-
-      if (score > bestScore) {
-        bestScore = score;
-        best = node;
-      }
-    });
-
-    contentRoot = best || body;
-  }
-
-  const clone = contentRoot.cloneNode(true) as HTMLElement;
-
-  const attributePattern = /(menu|nav|footer|header|sidebar|breadcrumb|share|social|related|newsletter|subscribe|cookie|legal|sitemap|toc)/i;
-  clone.querySelectorAll<HTMLElement>("[class],[id],[role],[aria-label]").forEach((node) => {
-    const classValue = node.getAttribute("class") || "";
-    const idValue = node.getAttribute("id") || "";
-    const roleValue = node.getAttribute("role") || "";
-    const labelValue = node.getAttribute("aria-label") || "";
-    const marker = `${classValue} ${idValue} ${roleValue} ${labelValue}`;
-    if (attributePattern.test(marker)) {
-      node.remove();
-    }
-  });
-
-  clone
-    .querySelectorAll<HTMLElement>("nav,header,footer,aside,ul,ol,section,div")
-    .forEach((node) => {
-      const text = normalizeText(node.textContent || "");
-      if (!text) return;
-
-      const paragraphs = node.querySelectorAll("p").length;
-      const headings = node.querySelectorAll("h1,h2,h3,h4,h5,h6").length;
-      const links = node.querySelectorAll("a").length;
-      const ratio = text.length > 0 ? linkTextLength(node) / text.length : 0;
-      const linkHeavy = (links >= 4 && ratio > 0.45) || (links >= 7 && text.length < 420);
-      const weakContent = paragraphs === 0 && headings === 0 && links >= 3;
-      if (linkHeavy || weakContent) {
-        node.remove();
-      }
-    });
-
-  clone.querySelectorAll<HTMLElement>("p,div,section,article").forEach((node) => {
-    const text = normalizeText(node.textContent || "");
-    if (!text && !node.querySelector("img,video,iframe")) {
-      node.remove();
-    }
-  });
-
-  const result = clone.innerHTML.trim();
-  if (result) return result;
-
-  const fallbackText = normalizeText(clone.textContent || "");
-  return fallbackText ? `<p>${fallbackText}</p>` : "<p></p>";
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function escapeAttribute(value: string): string {
-  return escapeHtml(value).replaceAll("\n", " ");
-}
-
-function decodeEntities(value: string): string {
-  if (!value) return "";
-  if (typeof document === "undefined") return value;
-  const textarea = document.createElement("textarea");
-  textarea.innerHTML = value;
-  return textarea.value;
-}
-
-function extractHeadMeta(rawHtml: string): { title: string; description: string } {
-  const titleMatch = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = decodeEntities(normalizeText(titleMatch?.[1] || ""));
-
-  const descriptionMatch =
-    rawHtml.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["'][^>]*>/i) ||
-    rawHtml.match(/<meta[^>]*content=["']([^"']*)["'][^>]*name=["']description["'][^>]*>/i);
-
-  const description = decodeEntities(normalizeText(descriptionMatch?.[1] || ""));
-  return { title, description };
-}
-
-function upsertTitle(rawHtml: string, title: string): string {
-  const nextTitle = normalizeText(title);
-  if (!nextTitle) return rawHtml;
-  const safeTitle = escapeHtml(nextTitle);
-
-  if (/<title[^>]*>[\s\S]*?<\/title>/i.test(rawHtml)) {
-    return rawHtml.replace(/<title[^>]*>[\s\S]*?<\/title>/i, `<title>${safeTitle}</title>`);
-  }
-
-  if (/<\/head>/i.test(rawHtml)) {
-    return rawHtml.replace(/<\/head>/i, `  <title>${safeTitle}</title>\n</head>`);
-  }
-
-  return rawHtml;
-}
-
-function upsertMetaDescription(rawHtml: string, description: string): string {
-  const nextDescription = normalizeText(description);
-  if (!nextDescription) return rawHtml;
-  const safeDescription = escapeAttribute(nextDescription);
-  const tag = `<meta name="description" content="${safeDescription}">`;
-
-  const hasDescriptionMeta =
-    /<meta[^>]*name=["']description["'][^>]*>/i.test(rawHtml) ||
-    /<meta[^>]*content=["'][^"']*["'][^>]*name=["']description["'][^>]*>/i.test(rawHtml);
-
-  if (hasDescriptionMeta) {
-    return rawHtml
-      .replace(/<meta[^>]*name=["']description["'][^>]*>/i, tag)
-      .replace(/<meta[^>]*content=["'][^"']*["'][^>]*name=["']description["'][^>]*>/i, tag);
-  }
-
-  if (/<\/head>/i.test(rawHtml)) {
-    return rawHtml.replace(/<\/head>/i, `  ${tag}\n</head>`);
-  }
-
-  return rawHtml;
-}
-
-function applyHeadMeta(rawHtml: string, title: string, description: string): string {
-  let next = rawHtml;
-  next = upsertTitle(next, title);
-  next = upsertMetaDescription(next, description);
-  return next;
-}
-
-function stripHtml(html: string): string {
-  if (!html) return "";
-
-  if (typeof DOMParser === "undefined") {
-    return normalizeText(html.replace(/<[^>]*>/g, " "));
-  }
-
-  const parser = new DOMParser();
-  const parsed = parser.parseFromString(`<!doctype html><html><body>${html}</body></html>`, "text/html");
-  return normalizeText(parsed.body.textContent || "");
-}
-
-function collectEditorStats(html: string): EditorStats {
-  if (!html.trim()) {
-    return {
-      textContent: "",
-      wordCount: 0,
-      headingCount: 0,
-      paragraphCount: 0,
-      faqCount: 0,
-      ctaCount: 0,
-      imageCount: 0,
-    };
-  }
-
-  if (typeof DOMParser === "undefined") {
-    const textContent = stripHtml(html);
-    return {
-      textContent,
-      wordCount: textContent ? textContent.split(/\s+/).filter(Boolean).length : 0,
-      headingCount: 0,
-      paragraphCount: 0,
-      faqCount: 0,
-      ctaCount: 0,
-      imageCount: 0,
-    };
-  }
-
-  const parser = new DOMParser();
-  const parsed = parser.parseFromString(`<!doctype html><html><body>${html}</body></html>`, "text/html");
-
-  const textContent = normalizeText(parsed.body.textContent || "");
-  const headingCount = parsed.body.querySelectorAll("h1,h2,h3,h4,h5,h6").length;
-  const paragraphCount = Array.from(parsed.body.querySelectorAll("p")).filter(
-    (node) => normalizeText(node.textContent || "").length > 0,
-  ).length;
-
-  let faqCount = parsed.body.querySelectorAll("section.faq-item,[data-faq-item='true']").length;
-  if (faqCount === 0) {
-    faqCount = Array.from(parsed.body.querySelectorAll("h2,h3,h4")).filter((node) =>
-      (node.textContent || "").includes("?"),
-    ).length;
-  }
-
-  const ctaCount = Array.from(parsed.body.querySelectorAll("a[href]")).filter(
-    (node) => normalizeText(node.textContent || "").length > 0,
-  ).length;
-
-  const imageCount = parsed.body.querySelectorAll("img").length;
-
-  return {
-    textContent,
-    wordCount: textContent ? textContent.split(/\s+/).filter(Boolean).length : 0,
-    headingCount,
-    paragraphCount,
-    faqCount,
-    ctaCount,
-    imageCount,
-  };
-}
-
-function countKeyword(text: string, keyword: string): number {
-  const target = keyword.trim().toLowerCase();
-  if (!target) return 0;
-
-  const source = text.toLowerCase();
-  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const matches = source.match(new RegExp(`\\b${escaped}\\b`, "g"));
-  return matches ? matches.length : 0;
-}
-
 function clampScore(value: number): number {
   if (value < 0) return 0;
   if (value > 100) return 100;
   return Math.round(value);
-}
-
-function statusTone(status: SignalStatus): { badge: string; text: string } {
-  if (status === "pass") {
-    return {
-      badge: "bg-emerald-50 text-emerald-700 border-emerald-200",
-      text: "text-emerald-700",
-    };
-  }
-
-  if (status === "warn") {
-    return {
-      badge: "bg-amber-50 text-amber-700 border-amber-200",
-      text: "text-amber-700",
-    };
-  }
-
-  return {
-    badge: "bg-red-50 text-red-700 border-red-200",
-    text: "text-red-700",
-  };
-}
-
-function termTone(status: TermStatus): string {
-  if (status === "good") return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (status === "high") return "bg-amber-50 text-amber-700 border-amber-200";
-  return "bg-red-50 text-red-700 border-red-200";
-}
-
-function metricTone(status: TermStatus): string {
-  if (status === "good") return "text-emerald-600";
-  if (status === "high") return "text-amber-600";
-  return "text-red-600";
-}
-
-function scoreLabel(score: number): string {
-  if (score >= 85) return "Strong";
-  if (score >= 65) return "Good";
-  if (score >= 45) return "Needs Work";
-  return "Critical";
 }
 
 function classifyRange(value: number, min: number, max: number): TermStatus {
@@ -432,9 +50,14 @@ function classifyRange(value: number, min: number, max: number): TermStatus {
   return "good";
 }
 
-const AUTO_OPTIMIZE_POLL_MS = 2000;
-const AUTO_OPTIMIZE_MAX_POLLS = 90;
+const NON_CONTENT_BLOCK_RE = /<(script|style|noscript|template|iframe)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const CHROME_CONTAINER_RE = /<(nav|header|footer|aside)\b[^>]*>[\s\S]*?<\/\1>/gi;
 
+/**
+ * Builds initial editor state from raw HTML and fallback metadata.
+ * @param input Raw HTML plus fallback title/description values.
+ * @returns Seeded template/body/meta values for the editor UI.
+ */
 function prepareEditorSeed(input: {
   rawHtml: string;
   fallbackTitle: string;
@@ -448,11 +71,22 @@ function prepareEditorSeed(input: {
   const split = splitHtmlDocument(input.rawHtml);
   const cleaned = stripPageChrome(split.editableHtml);
   const cleanedText = stripHtml(cleaned);
-  const originalText = stripHtml(split.editableHtml);
+  const heuristicSource = split.editableHtml.replace(NON_CONTENT_BLOCK_RE, " ").replace(CHROME_CONTAINER_RE, " ");
+  const originalText = stripHtml(heuristicSource);
+  const cleanedWordCount = cleanedText ? cleanedText.split(/\s+/).length : 0;
+  const originalWordCount = originalText ? originalText.split(/\s+/).length : 0;
+  const cleanedHeadingCount = (cleaned.match(/<h[1-6]\b/gi) || []).length;
+  const cleanedParagraphCount = (cleaned.match(/<p\b/gi) || []).length;
+  const cleanedImageCount = (cleaned.match(/<img\b/gi) || []).length;
+  const cleanedLinkCount = (cleaned.match(/<a\b/gi) || []).length;
+  const hasContentStructure = cleanedHeadingCount + cleanedParagraphCount + cleanedImageCount > 0;
+  const looksLikeMenu = cleanedLinkCount >= 12 && cleanedParagraphCount === 0 && cleanedHeadingCount <= 1;
   const cleanedKeepsEnoughContent =
-    cleanedText.length > 0 &&
-    (originalText.length === 0 ||
-      cleanedText.length >= Math.min(200, Math.floor(originalText.length * 0.2)));
+    cleanedWordCount >= 40 &&
+    !looksLikeMenu &&
+    (originalWordCount === 0 ||
+      cleanedWordCount >= Math.min(220, Math.floor(originalWordCount * 0.2)) ||
+      (hasContentStructure && cleanedWordCount >= 80));
   const seededBase = cleanedKeepsEnoughContent
     ? cleaned.trim()
     : split.editableHtml.trim();
@@ -461,10 +95,35 @@ function prepareEditorSeed(input: {
 
   return {
     template: split.template,
-    seededHtml: seeded,
+    seededHtml: sanitizeEditorHtml(seeded),
     metaTitle: meta.title || input.fallbackTitle,
     metaDescription: meta.description || input.fallbackDescription,
   };
+}
+
+function shouldPreferOptimizedFromSeed(seededHtml: string): boolean {
+  const headingCount = (seededHtml.match(/<h[1-6]\b/gi) || []).length;
+  const linkCount = (seededHtml.match(/<a\b/gi) || []).length;
+  const plainText = normalizeText(stripHtml(seededHtml));
+  const wordCount = plainText ? plainText.split(/\s+/).length : 0;
+
+  // Source snapshots from chrome-heavy pages can collapse into mostly link lists.
+  return headingCount === 0 && linkCount >= 8 && wordCount < 500;
+}
+
+function toEditorLoadErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return "Failed to load editor data.";
+  const message = error.message || "";
+
+  if (/API error 404/i.test(message) && /No HTML artifacts available for this job/i.test(message)) {
+    return "No HTML artifacts are available for this audit yet. Wait for scan or optimize to finish, then open the editor again.";
+  }
+
+  if (/API error 404/i.test(message)) {
+    return "This audit has no editable HTML yet. Run scan or optimize first, then reopen the editor.";
+  }
+
+  return message;
 }
 
 export function HtmlEditorPanel({
@@ -475,10 +134,13 @@ export function HtmlEditorPanel({
   onClose,
 }: Props) {
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const isMountedRef = useRef(true);
+  const seededEditorHtmlRef = useRef("<p></p>");
 
   const [doc, setDoc] = useState<EditorDocument | null>(null);
   const [template, setTemplate] = useState<HtmlTemplate>({ prefix: "", suffix: "" });
   const [editorHtml, setEditorHtml] = useState("");
+  const [statsInputHtml, setStatsInputHtml] = useState("");
   const [editorSeed, setEditorSeed] = useState(0);
 
   const [metaTitle, setMetaTitle] = useState("");
@@ -493,14 +155,18 @@ export function HtmlEditorPanel({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const audit = useMemo(() => parseAudit(contextItem?.audit_result), [contextItem?.audit_result]);
+  const audit = useMemo(() => parseAuditResult(contextItem?.audit_result), [contextItem?.audit_result]);
+  const auditFallbackTitle = audit?.title_tag?.current || "";
+  const auditFallbackDescription = audit?.meta_description?.options?.[0] || "";
 
-  const stats = useMemo(() => collectEditorStats(editorHtml), [editorHtml]);
+  const stats = useMemo(() => collectEditorStats(statsInputHtml), [statsInputHtml]);
 
   const targetWords = useMemo(() => {
     const fromAudit = audit?.word_count?.serp_avg;
-    if (typeof fromAudit === "number" && fromAudit > 0) return fromAudit;
-    return 800;
+    if (typeof fromAudit === "number" && fromAudit > 0) {
+      return Math.max(EDITOR_DEFAULT_TARGET_WORDS, Math.round(fromAudit));
+    }
+    return EDITOR_DEFAULT_TARGET_WORDS;
   }, [audit?.word_count?.serp_avg]);
 
   const primaryKeyword = useMemo(
@@ -515,7 +181,7 @@ export function HtmlEditorPanel({
       if (normalized) values.add(normalized);
     });
     return Array.from(values);
-  }, [audit?.keywords?.secondary]);
+  }, [audit]);
 
   const primaryCount = useMemo(
     () => countKeyword(stats.textContent, primaryKeyword),
@@ -657,17 +323,17 @@ export function HtmlEditorPanel({
 
     signals.push({
       key: "secondary-coverage",
-      label: "Secondary term coverage",
+      label: "Secondary keyword coverage",
       status: secondaryStatus,
       score: secondaryScore,
       maxScore: secondaryTotal > 0 ? 14 : 0,
       detail:
         secondaryTotal > 0
-          ? `${coveredSecondaryCount}/${secondaryTotal} terms used`
-          : "No secondary terms provided",
+          ? `${coveredSecondaryCount}/${secondaryTotal} keywords used`
+          : "No secondary keywords provided",
       recommendation:
         secondaryTotal > 0
-          ? "Use more secondary terms in supporting sections."
+          ? "Use more secondary keywords in supporting sections."
           : "No secondary keyword constraints.",
     });
 
@@ -825,7 +491,21 @@ export function HtmlEditorPanel({
     return { radius, circumference, offset };
   }, [liveScore]);
 
-  const isEditorBlank = useMemo(() => stripHtml(editorHtml).length === 0, [editorHtml]);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const timerId = window.setTimeout(() => {
+      setStatsInputHtml(editorHtml);
+    }, EDITOR_STATS_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [editorHtml]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -848,18 +528,29 @@ export function HtmlEditorPanel({
 
         const prepared = prepareEditorSeed({
           rawHtml,
-          fallbackTitle: audit?.title_tag?.current || "",
-          fallbackDescription: audit?.meta_description?.options?.[0] || "",
+          fallbackTitle: auditFallbackTitle,
+          fallbackDescription: auditFallbackDescription,
         });
+        const finalPrepared =
+          initialVersion === "source" &&
+          !!result.optimized_html &&
+          shouldPreferOptimizedFromSeed(prepared.seededHtml)
+            ? prepareEditorSeed({
+                rawHtml: result.optimized_html,
+                fallbackTitle: auditFallbackTitle,
+                fallbackDescription: auditFallbackDescription,
+              })
+            : prepared;
 
-        setTemplate(prepared.template);
-        setEditorHtml(prepared.seededHtml);
-        setMetaTitle(prepared.metaTitle);
-        setMetaDescription(prepared.metaDescription);
+        setTemplate(finalPrepared.template);
+        seededEditorHtmlRef.current = finalPrepared.seededHtml;
+        setEditorHtml(finalPrepared.seededHtml);
+        setMetaTitle(finalPrepared.metaTitle);
+        setMetaDescription(finalPrepared.metaDescription);
         setEditorSeed((prev) => prev + 1);
       } catch (err) {
         if (!mounted) return;
-        setError(err instanceof Error ? err.message : "Failed to load editor data.");
+        setError(toEditorLoadErrorMessage(err));
       } finally {
         if (mounted) setLoading(false);
       }
@@ -868,16 +559,16 @@ export function HtmlEditorPanel({
     return () => {
       mounted = false;
     };
-  }, [jobId, initialVersion, audit?.meta_description?.options, audit?.title_tag?.current]);
+  }, [jobId, initialVersion, auditFallbackTitle, auditFallbackDescription]);
 
   useEffect(() => {
     if (!editorRef.current) return;
-    editorRef.current.innerHTML = editorHtml || "<p></p>";
+    editorRef.current.innerHTML = sanitizeEditorHtml(seededEditorHtmlRef.current || "<p></p>");
   }, [editorSeed]);
 
   function syncFromEditor() {
     if (!editorRef.current) return;
-    setEditorHtml(editorRef.current.innerHTML);
+    setEditorHtml(sanitizeEditorHtml(editorRef.current.innerHTML));
   }
 
   function focusEditor() {
@@ -996,78 +687,17 @@ export function HtmlEditorPanel({
     insertHtmlAtCursor(`<p><a href=\"https://\" class=\"seo-cta\">Call to action</a></p>`);
   }
 
-  function applyAuditOutline() {
-    const outline = audit?.headings_plan?.outline || [];
-    if (outline.length === 0 || !editorRef.current) return;
-
-    const existing = new Set<string>();
-    editorRef.current.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((node) => {
-      const text = normalizeText(node.textContent || "").toLowerCase();
-      if (text) existing.add(text);
-    });
-
-    const snippets: string[] = [];
-    for (const row of outline) {
-      const text = normalizeText(row.text || "");
-      if (!text || existing.has(text.toLowerCase())) continue;
-      const tagRaw = (row.tag || "h2").toLowerCase();
-      const safeTag = tagRaw === "h1" || tagRaw === "h2" || tagRaw === "h3" || tagRaw === "h4" ? tagRaw : "h2";
-      snippets.push(`<${safeTag}>${text}</${safeTag}>`);
-    }
-
-    if (snippets.length === 0) {
-      setMessage("All audit headings are already present.");
-      return;
-    }
-
-    editorRef.current.insertAdjacentHTML("beforeend", `\n${snippets.join("\n")}\n`);
-    syncFromEditor();
-    setMessage(`Added ${snippets.length} heading suggestion(s).`);
-  }
-
-  function applyAuditFaqPack() {
-    const faqPack = audit?.faq_pack || [];
-    if (faqPack.length === 0 || !editorRef.current) return;
-
-    const existing = new Set<string>();
-    editorRef.current.querySelectorAll("section.faq-item h3, [data-faq-item='true'] h3").forEach((node) => {
-      const text = normalizeText(node.textContent || "").toLowerCase();
-      if (text) existing.add(text);
-    });
-
-    const snippets = faqPack
-      .slice(0, 6)
-      .map((row) => ({
-        question: normalizeText(row.question || ""),
-        answer: normalizeText(row.answer || ""),
-      }))
-      .filter((row) => (row.question || row.answer) && !existing.has(row.question.toLowerCase()))
-      .map(
-        (row) =>
-          `<section class=\"faq-item\" data-faq-item=\"true\"><h3>${row.question || "Question"}</h3><p>${row.answer || "Answer"}</p></section>`,
-      );
-
-    if (snippets.length === 0) {
-      setMessage("All audit FAQ entries are already present.");
-      return;
-    }
-
-    editorRef.current.insertAdjacentHTML("beforeend", `\n${snippets.join("\n")}\n`);
-    syncFromEditor();
-    setMessage(`Added ${snippets.length} FAQ suggestion(s).`);
-  }
-
-  function applyAuditSuggestions() {
-    applyAuditOutline();
-    applyAuditFaqPack();
-  }
-
   async function waitForOptimizeCompletion(targetJobId: number): Promise<HistoryItem> {
     for (let attempt = 0; attempt < AUTO_OPTIMIZE_MAX_POLLS; attempt += 1) {
+      if (!isMountedRef.current) {
+        throw new Error("Auto-Optimize was cancelled.");
+      }
+
       const item = await getHistoryItem(targetJobId);
       if (item.status === "done" || item.status === "failed") {
         return item;
       }
+
       await new Promise<void>((resolve) => {
         window.setTimeout(resolve, AUTO_OPTIMIZE_POLL_MS);
       });
@@ -1093,23 +723,27 @@ export function HtmlEditorPanel({
       }
 
       const updated = await getEditorDocument(doc.id);
+      if (!isMountedRef.current) return;
+
       const prepared = prepareEditorSeed({
         rawHtml: updated.optimized_html || updated.source_html || "",
-        fallbackTitle: metaTitle || audit?.title_tag?.current || "",
-        fallbackDescription:
-          metaDescription || audit?.meta_description?.options?.[0] || "",
+        fallbackTitle: metaTitle || auditFallbackTitle,
+        fallbackDescription: metaDescription || auditFallbackDescription,
       });
 
       setDoc(updated);
       setTemplate(prepared.template);
+      seededEditorHtmlRef.current = prepared.seededHtml;
       setEditorHtml(prepared.seededHtml);
       setMetaTitle(prepared.metaTitle);
       setMetaDescription(prepared.metaDescription);
       setEditorSeed((prev) => prev + 1);
-      setMessage("Auto-Optimize complete. AI content loaded into the editor.");
+      setMessage("Auto-Optimize complete. Optimized content loaded into the editor.");
     } catch (err) {
+      if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : "Auto-Optimize failed.");
     } finally {
+      if (!isMountedRef.current) return;
       setAutoOptimizing(false);
     }
   }
@@ -1117,7 +751,7 @@ export function HtmlEditorPanel({
   async function handleSave() {
     if (!doc) return;
 
-    const latestHtml = editorRef.current?.innerHTML || editorHtml;
+    const latestHtml = sanitizeEditorHtml(editorRef.current?.innerHTML || editorHtml);
     if (!stripHtml(latestHtml)) {
       setError("Cannot save empty content.");
       return;
@@ -1145,22 +779,22 @@ export function HtmlEditorPanel({
 
   const isPageMode = mode === "page";
   const outerClass = isPageMode
-    ? "fixed inset-0 z-[90] bg-[#eef0f5]"
-    : "fixed inset-0 z-50 bg-[#c8c9d2] p-2 sm:p-4";
+    ? "fixed inset-0 z-[90] bg-[#edf1f9]"
+    : "fixed inset-0 z-50 bg-[#c8cedb] p-2 sm:p-4";
   const shellClass = isPageMode
-    ? "h-full w-full border-y border-[#d9dbe6] bg-[#f7f7fb] shadow-none overflow-hidden flex flex-col"
-    : "h-full rounded-[18px] border border-[#cfd1dc] bg-[#f7f7fb] shadow-[0_28px_90px_rgba(11,13,28,0.22)] overflow-hidden flex flex-col";
+    ? "flex h-full w-full flex-col overflow-hidden border-y border-[#d9deeb] bg-[#f6f8ff] shadow-none"
+    : "flex h-full flex-col overflow-hidden rounded-[18px] border border-[#cfd5e4] bg-[#f6f8ff] shadow-[0_28px_90px_rgba(11,13,28,0.22)]";
 
   return (
     <div className={outerClass}>
       <div className={shellClass}>
-        <header className="border-b border-[#e3e4ef] bg-[#f6f7fb]">
-          <div className="px-5 py-3 flex items-center justify-between gap-3">
+        <header className="border-b border-[#e5e8f2] bg-white/90 backdrop-blur-[4px]">
+          <div className="flex items-center justify-between gap-3 px-5 py-3.5">
             <div className="min-w-0 flex items-center gap-3">
               <button
                 type="button"
                 onClick={onClose}
-                className="h-9 w-9 rounded-lg border border-[#e3e3ea] bg-white text-[#494958] hover:border-[#cacad7] transition-colors"
+                className="h-9 w-9 rounded-lg border border-[#dde2ef] bg-white text-[#494958] shadow-[0_1px_0_rgba(17,24,39,0.02)] transition-colors hover:border-[#c5cde0]"
                 aria-label="Back"
                 title="Close Editor"
               >
@@ -1170,7 +804,7 @@ export function HtmlEditorPanel({
               </button>
               <div className="min-w-0">
                 <p className="text-[14px] font-semibold text-[#1f2030]">Content Editor</p>
-                <p className="text-[12px] text-[#6c6d7a] truncate max-w-[720px]">
+                <p className="max-w-[720px] truncate text-[12px] text-[#636a80]">
                   {primaryKeyword || doc?.url || "Untitled page"}
                 </p>
               </div>
@@ -1181,7 +815,7 @@ export function HtmlEditorPanel({
                 <a
                   href={getSourceExportUrl(doc.id)}
                   download
-                  className="h-9 px-3 inline-flex items-center rounded-lg border border-[#e3e3ea] bg-white text-[12px] font-medium text-[#464656] hover:border-[#c9c9d6] transition-colors"
+                  className="inline-flex h-9 items-center rounded-lg border border-[#dde2ef] bg-white px-3 text-[12px] font-medium text-[#464656] shadow-[0_1px_0_rgba(17,24,39,0.02)] transition-colors hover:border-[#c5cde0]"
                 >
                   Source
                 </a>
@@ -1190,7 +824,7 @@ export function HtmlEditorPanel({
                 <a
                   href={getExportUrl(doc.id)}
                   download
-                  className="h-9 px-3 inline-flex items-center rounded-lg border border-[#e3e3ea] bg-white text-[12px] font-medium text-[#464656] hover:border-[#c9c9d6] transition-colors"
+                  className="inline-flex h-9 items-center rounded-lg border border-[#dde2ef] bg-white px-3 text-[12px] font-medium text-[#464656] shadow-[0_1px_0_rgba(17,24,39,0.02)] transition-colors hover:border-[#c5cde0]"
                 >
                   Export
                 </a>
@@ -1199,39 +833,27 @@ export function HtmlEditorPanel({
                 type="button"
                 disabled={saving || autoOptimizing}
                 onClick={handleSave}
-                className="h-9 px-4 rounded-lg bg-[#14151f] text-[12px] font-semibold text-white hover:bg-[#232437] disabled:opacity-50 transition-colors"
+                className="h-9 rounded-lg bg-[#14151f] px-4 text-[12px] font-semibold text-white shadow-[0_8px_20px_rgba(15,18,31,0.18)] transition-colors hover:bg-[#232437] disabled:opacity-50"
               >
                 {saving ? "Saving..." : "Save"}
               </button>
             </div>
           </div>
 
-          <div className="px-5 pb-3 flex flex-wrap items-center gap-1.5 border-t border-[#ececf3] pt-2.5">
-            <ToolbarButton label="P" title="Paragraph" onClick={() => applyBlockFormat("p")} />
-            <ToolbarButton label="H1" title="Heading 1" onClick={() => applyBlockFormat("h1")} />
-            <ToolbarButton label="H2" title="Heading 2" onClick={() => applyBlockFormat("h2")} />
-            <ToolbarButton label="H3" title="Heading 3" onClick={() => applyBlockFormat("h3")} />
-            <ToolbarButton label="B" title="Bold" onClick={() => runEditorCommand("bold")} />
-            <ToolbarButton label="I" title="Italic" onClick={() => runEditorCommand("italic")} />
-            <ToolbarButton label="U" title="Underline" onClick={() => runEditorCommand("underline")} />
-            <ToolbarButton label="UL" title="Bullet List" onClick={() => runEditorCommand("insertUnorderedList")} />
-            <ToolbarButton label="OL" title="Numbered List" onClick={() => runEditorCommand("insertOrderedList")} />
-            <ToolbarButton label="Link" title="Insert Link" onClick={insertLink} />
-            <ToolbarButton label="Clear" title="Clear Formatting" onClick={() => runEditorCommand("removeFormat")} />
-            <span className="mx-1 h-5 w-px bg-[#dcdce6]" />
-            <ToolbarButton label="FAQ" title="Insert FAQ Template" onClick={insertFaqTemplate} />
-            <ToolbarButton label="CTA" title="Insert CTA Template" onClick={insertCtaTemplate} />
-            <ToolbarButton
-              label={autoOptimizing ? "Optimizing..." : "Auto-Optimize"}
-              title="Run AI Auto-Optimize"
-              onClick={handleAutoOptimize}
-              disabled={autoOptimizing || !doc}
-            />
-          </div>
+          <EditorToolbar
+            autoOptimizing={autoOptimizing}
+            hasDocument={!!doc}
+            onApplyBlockFormat={applyBlockFormat}
+            onRunEditorCommand={runEditorCommand}
+            onInsertLink={insertLink}
+            onInsertFaqTemplate={insertFaqTemplate}
+            onInsertCtaTemplate={insertCtaTemplate}
+            onAutoOptimize={handleAutoOptimize}
+          />
         </header>
 
         {(message || error) && (
-          <div className="px-4 py-2 border-b border-[#ececf3] bg-[#fafafe]">
+          <div className="border-b border-[#e8ebf4] bg-[#f9fbff] px-4 py-2.5">
             <p className={`text-[12px] ${error ? "text-red-600" : "text-[#5d6072]"}`}>{error || message}</p>
           </div>
         )}
@@ -1242,361 +864,47 @@ export function HtmlEditorPanel({
               <p className="text-[13px] text-[#7b7d8f]">Loading editor...</p>
             </div>
           ) : (
-            <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_372px]">
-              <section className="min-h-0 flex flex-col border-r border-[#e5e6ef] bg-white">
-                <div className="px-6 py-4 border-b border-[#ececf3] bg-[#fcfcff]">
-                  <div className="space-y-3">
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="text-[11px] uppercase tracking-wide text-[#828396]">Title</label>
-                        <span className={`text-[11px] ${metaTitle.length > 70 ? "text-amber-600" : "text-[#999aac]"}`}>
-                          {metaTitle.length}/70
-                        </span>
-                      </div>
-                      <input
-                        type="text"
-                        value={metaTitle}
-                        onChange={(e) => setMetaTitle(e.target.value)}
-                        placeholder="SEO title"
-                        className="w-full h-10 rounded-lg border border-[#e5e6ef] bg-white px-3 text-[14px] text-[#202234] placeholder:text-[#a8a9b8]"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <label className="text-[11px] uppercase tracking-wide text-[#828396]">Description</label>
-                        <span
-                          className={`text-[11px] ${metaDescription.length > 156 ? "text-amber-600" : "text-[#999aac]"}`}
-                        >
-                          {metaDescription.length}/156
-                        </span>
-                      </div>
-                      <textarea
-                        value={metaDescription}
-                        onChange={(e) => setMetaDescription(e.target.value)}
-                        placeholder="Meta description"
-                        rows={2}
-                        className="w-full rounded-lg border border-[#e5e6ef] bg-white px-3 py-2 text-[13px] text-[#202234] placeholder:text-[#a8a9b8] resize-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="relative flex-1 min-h-0 overflow-auto bg-white">
-                  {isEditorBlank && (
-                    <p className="absolute left-10 top-8 text-[14px] text-[#b1b2c2] pointer-events-none">
-                      Start writing or paste the page content here...
-                    </p>
-                  )}
-
-                  {autoOptimizing && (
-                    <div className="absolute inset-0 z-20 grid place-items-center bg-white/72 backdrop-blur-[1px] transition-opacity duration-200">
-                      <div className="inline-flex items-center gap-2 rounded-lg border border-[#dfe1ed] bg-white px-4 py-2 text-[13px] text-[#2a2d43] shadow-sm">
-                        <svg className="h-4 w-4 animate-spin text-[#3f48bb]" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-20" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" />
-                          <path className="opacity-90" d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                        </svg>
-                        <span>Auto-Optimizing content...</span>
-                      </div>
-                    </div>
-                  )}
-
-                  <div
-                    ref={editorRef}
-                    contentEditable={!autoOptimizing}
-                    suppressContentEditableWarning
-                    onInput={syncFromEditor}
-                    onBlur={syncFromEditor}
-                    className="min-h-full mx-auto max-w-[860px] px-6 sm:px-8 lg:px-10 py-8 sm:py-10 text-[16px] leading-[1.75] text-[#1f2133] outline-none
-                      [&_h1]:text-[38px] [&_h1]:leading-[1.14] [&_h1]:font-semibold [&_h1]:tracking-[-0.02em] [&_h1]:mt-8 [&_h1]:mb-4
-                      [&_h2]:text-[30px] [&_h2]:leading-[1.22] [&_h2]:font-semibold [&_h2]:tracking-[-0.012em] [&_h2]:mt-8 [&_h2]:mb-3
-                      [&_h3]:text-[24px] [&_h3]:leading-[1.28] [&_h3]:font-semibold [&_h3]:mt-7 [&_h3]:mb-3
-                      [&_p]:my-3 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1.5
-                      [&_a]:text-[#3f48bb] [&_a]:underline [&_section.faq-item]:my-6 [&_section.faq-item>h3]:text-[26px] [&_section.faq-item>h3]:font-semibold"
-                  />
-                </div>
+            <div className="grid h-full min-h-0 lg:grid-cols-[minmax(0,1fr)_388px]">
+              <section className="min-h-0 flex flex-col border-r border-[#e6e9f3] bg-white">
+                <MetaFieldsPanel
+                  metaTitle={metaTitle}
+                  metaDescription={metaDescription}
+                  onMetaTitleChange={setMetaTitle}
+                  onMetaDescriptionChange={setMetaDescription}
+                />
+                <EditorCanvas
+                  editorRef={editorRef}
+                  autoOptimizing={autoOptimizing}
+                  onSyncFromEditor={syncFromEditor}
+                />
               </section>
 
-              <aside className="min-h-0 overflow-auto bg-[#f9faff]">
-                <div className="p-3 space-y-3">
-                  <div className="grid grid-cols-3 rounded-xl bg-[#f1f2f8] p-1">
-                    {(["guidelines", "facts", "outline"] as SideTab[]).map((tab) => (
-                      <button
-                        key={tab}
-                        type="button"
-                        onClick={() => setSideTab(tab)}
-                        className={`h-8 rounded-lg text-[11px] uppercase tracking-wide font-semibold ${
-                          sideTab === tab ? "bg-white text-[#3f2fa5] shadow-sm" : "text-[#7b7d90]"
-                        }`}
-                      >
-                        {tab === "guidelines" ? "Guidelines" : tab === "facts" ? "Facts" : "Outline"}
-                      </button>
-                    ))}
-                  </div>
-
-                  {sideTab === "guidelines" && (
-                    <>
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <p className="text-[12px] font-semibold text-[#2a2d43]">Content Score</p>
-                        <div className="relative mt-2">
-                          <svg viewBox="0 0 200 118" className="w-full h-32">
-                            <defs>
-                              <linearGradient id={`score-gradient-${jobId || "x"}`} x1="0%" y1="0%" x2="100%" y2="0%">
-                                <stop offset="0%" stopColor="#eb5757" />
-                                <stop offset="52%" stopColor="#f2c94c" />
-                                <stop offset="100%" stopColor="#6fcf97" />
-                              </linearGradient>
-                            </defs>
-                            <path
-                              d="M 20 98 A 74 74 0 0 1 180 98"
-                              fill="none"
-                              stroke="#ececf2"
-                              strokeWidth="14"
-                              strokeLinecap="round"
-                            />
-                            <path
-                              d="M 20 98 A 74 74 0 0 1 180 98"
-                              fill="none"
-                              stroke={`url(#score-gradient-${jobId || "x"})`}
-                              strokeWidth="14"
-                              strokeLinecap="round"
-                              strokeDasharray={`${scoreGauge.circumference} ${scoreGauge.circumference}`}
-                              strokeDashoffset={scoreGauge.offset}
-                            />
-                          </svg>
-                          <div className="absolute inset-0 flex flex-col items-center justify-end pb-3">
-                            <p className="text-[42px] leading-none font-semibold text-[#222438]">{liveScore}</p>
-                            <p className="text-[12px] text-[#7a7d91] mt-1">{scoreLabel(liveScore)}</p>
-                          </div>
-                        </div>
-                        <div className="mt-2 flex items-center justify-between text-[12px] text-[#6d7085]">
-                          <span>Audit {audit?.overall_score ?? "-"}</span>
-                          <span>Target {targetWords} words</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleAutoOptimize}
-                          disabled={autoOptimizing || !doc}
-                          className="mt-3 w-full h-10 rounded-lg bg-[#151622] text-white text-[13px] font-semibold hover:bg-[#24263a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {autoOptimizing ? (
-                            <span className="inline-flex items-center gap-2">
-                              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                                <circle className="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" />
-                                <path className="opacity-90" d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                              </svg>
-                              <span>Auto-Optimizing...</span>
-                            </span>
-                          ) : (
-                            "Auto-Optimize"
-                          )}
-                        </button>
-                      </section>
-
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[12px] font-semibold text-[#2a2d43]">Content Structure</p>
-                          <span className="text-[11px] text-[#8a8da4]">Live</span>
-                        </div>
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          {[
-                            {
-                              label: "Words",
-                              value: stats.wordCount,
-                              range: `${Math.round(targetWords * 0.85)}-${Math.round(targetWords * 1.2)}`,
-                              status: classifyRange(
-                                stats.wordCount,
-                                Math.round(targetWords * 0.85),
-                                Math.round(targetWords * 1.2),
-                              ),
-                            },
-                            {
-                              label: "Headings",
-                              value: stats.headingCount,
-                              range: `${headingTarget.min}-${headingTarget.max}`,
-                              status: classifyRange(stats.headingCount, headingTarget.min, headingTarget.max),
-                            },
-                            {
-                              label: "Paragraphs",
-                              value: stats.paragraphCount,
-                              range: `${paragraphTarget.min}-${paragraphTarget.max}`,
-                              status: classifyRange(
-                                stats.paragraphCount,
-                                paragraphTarget.min,
-                                paragraphTarget.max,
-                              ),
-                            },
-                            {
-                              label: "Images",
-                              value: stats.imageCount,
-                              range: `${imageTarget.min}-${imageTarget.max}`,
-                              status: classifyRange(stats.imageCount, imageTarget.min, imageTarget.max),
-                            },
-                          ].map((item) => (
-                            <div key={item.label} className="rounded-lg border border-[#eef0f6] bg-[#fcfcff] p-2.5">
-                              <p className="text-[10px] uppercase tracking-wide text-[#8f92a8]">{item.label}</p>
-                              <p className={`text-[20px] font-semibold leading-none mt-1 ${metricTone(item.status)}`}>
-                                {item.value}
-                              </p>
-                              <p className="text-[11px] text-[#8d90a6] mt-1">{item.range}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
-
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <p className="text-[12px] font-semibold text-[#2a2d43]">Terms</p>
-                        <input
-                          type="text"
-                          value={termQuery}
-                          onChange={(e) => setTermQuery(e.target.value)}
-                          placeholder="Search terms"
-                          className="mt-2 w-full h-9 rounded-lg border border-[#e2e4ee] bg-[#fbfbfe] px-3 text-[12px]"
-                        />
-                        <div className="mt-2 max-h-56 overflow-auto space-y-1.5 pr-1">
-                          {filteredTerms.slice(0, 30).map((entry) => (
-                            <div
-                              key={entry.term}
-                              className={`rounded-md border px-2.5 py-1.5 text-[12px] ${termTone(entry.status)}`}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="truncate">{entry.term}</span>
-                                <span className="font-semibold tabular-nums">
-                                  {entry.count}/{entry.min}-{entry.max}
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                          {filteredTerms.length === 0 && (
-                            <p className="text-[12px] text-[#9a9db2] py-1">No terms match this query.</p>
-                          )}
-                        </div>
-                      </section>
-                    </>
-                  )}
-
-                  {sideTab === "facts" && (
-                    <>
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <p className="text-[12px] font-semibold text-[#2a2d43]">Priority Fixes</p>
-                        <div className="mt-2 space-y-2">
-                          {criticalSignals.length > 0 ? (
-                            criticalSignals.map((signal) => (
-                              <div key={signal.key} className="rounded-lg border border-[#ececf3] p-2.5">
-                                <div className="flex items-center justify-between gap-2">
-                                  <p className="text-[12px] text-[#303248] font-medium">{signal.label}</p>
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full border text-[10px] uppercase tracking-wide ${statusTone(signal.status).badge}`}
-                                  >
-                                    {signal.status}
-                                  </span>
-                                </div>
-                                <p className="text-[11px] text-[#7a7d93] mt-1">{signal.recommendation}</p>
-                              </div>
-                            ))
-                          ) : (
-                            <p className="text-[12px] text-[#8f91a6]">No critical issues detected.</p>
-                          )}
-                        </div>
-                      </section>
-
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <p className="text-[12px] font-semibold text-[#2a2d43]">Strengths</p>
-                        <div className="mt-2 space-y-1.5">
-                          {(audit?.strengths || []).length > 0 ? (
-                            (audit?.strengths || []).map((row, idx) => (
-                              <p key={`${row}-${idx}`} className="text-[12px] text-[#5f6278]">
-                                - {row}
-                              </p>
-                            ))
-                          ) : (
-                            <p className="text-[12px] text-[#9295aa]">No strengths listed by audit.</p>
-                          )}
-                        </div>
-                      </section>
-
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <p className="text-[12px] font-semibold text-[#2a2d43]">Content Gaps</p>
-                        <div className="mt-2 space-y-1.5">
-                          {(audit?.content_gaps || []).length > 0 ? (
-                            (audit?.content_gaps || []).map((row, idx) => (
-                              <p key={`${row}-${idx}`} className="text-[12px] text-[#5f6278]">
-                                - {row}
-                              </p>
-                            ))
-                          ) : (
-                            <p className="text-[12px] text-[#9295aa]">No content gaps listed by audit.</p>
-                          )}
-                        </div>
-                      </section>
-                    </>
-                  )}
-
-                  {sideTab === "outline" && (
-                    <>
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <p className="text-[12px] font-semibold text-[#2a2d43]">Recommended Outline</p>
-                        {audit?.headings_plan ? (
-                          <div className="mt-2 space-y-2">
-                            <p className="text-[12px] text-[#3a3d54]">
-                              H1: <span className="font-semibold">{audit.headings_plan.recommended_h1}</span>
-                            </p>
-                            {(audit.headings_plan.outline || []).map((row, idx) => (
-                              <div key={`${row.tag}-${row.text}-${idx}`} className="flex items-start gap-2 text-[12px]">
-                                <span className="mt-0.5 rounded bg-[#f1f2f8] px-1.5 py-0.5 text-[10px] uppercase text-[#6f7288]">
-                                  {row.tag}
-                                </span>
-                                <p className="text-[#4a4d63]">{row.text}</p>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="mt-2 text-[12px] text-[#9295aa]">No outline recommendation available.</p>
-                        )}
-                      </section>
-
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <p className="text-[12px] font-semibold text-[#2a2d43]">Checklist</p>
-                        {audit?.checklist && audit.checklist.length > 0 ? (
-                          <div className="mt-2 space-y-2">
-                            {audit.checklist
-                              .slice()
-                              .sort((a, b) => a.priority - b.priority)
-                              .slice(0, 12)
-                              .map((item, idx) => (
-                                <div key={`${item.task}-${idx}`} className="rounded-md border border-[#ececf3] p-2">
-                                  <p className="text-[12px] text-[#3f4259]">
-                                    {item.priority}. {item.task}
-                                  </p>
-                                  <p className="text-[11px] text-[#8c90a6] mt-0.5">{item.location}</p>
-                                </div>
-                              ))}
-                          </div>
-                        ) : (
-                          <p className="mt-2 text-[12px] text-[#9295aa]">No checklist items available.</p>
-                        )}
-                      </section>
-
-                      <section className="rounded-xl border border-[#e8e8f1] bg-white p-3">
-                        <p className="text-[12px] font-semibold text-[#2a2d43]">Signal Breakdown</p>
-                        <div className="mt-2 space-y-1.5">
-                          {seoSignals.map((signal) => (
-                            <div key={signal.key} className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="text-[12px] text-[#3f4258]">{signal.label}</p>
-                                <p className="text-[11px] text-[#8b8ea4]">{signal.detail}</p>
-                              </div>
-                              <span className={`text-[10px] uppercase ${statusTone(signal.status).text}`}>
-                                {signal.status}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </section>
-                    </>
-                  )}
-                </div>
-              </aside>
+              <SeoSignalsSidebar
+                jobId={jobId}
+                sideTab={sideTab}
+                liveScore={liveScore}
+                targetWords={targetWords}
+                autoOptimizing={autoOptimizing}
+                hasDocument={!!doc}
+                scoreGauge={scoreGauge}
+                stats={{
+                  wordCount: stats.wordCount,
+                  headingCount: stats.headingCount,
+                  paragraphCount: stats.paragraphCount,
+                  imageCount: stats.imageCount,
+                }}
+                headingTarget={headingTarget}
+                paragraphTarget={paragraphTarget}
+                imageTarget={imageTarget}
+                termQuery={termQuery}
+                filteredTerms={filteredTerms}
+                criticalSignals={criticalSignals}
+                seoSignals={seoSignals}
+                audit={audit}
+                onAutoOptimize={handleAutoOptimize}
+                onSideTabChange={setSideTab}
+                onTermQueryChange={setTermQuery}
+              />
             </div>
           )}
         </div>

@@ -1,0 +1,6 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/page": "/",
+  "/editor/[jobId]/page": "/editor/[jobId]",
+  "/dashboard/page": "/dashboard"
+}

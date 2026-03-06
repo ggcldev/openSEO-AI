@@ -20,12 +20,27 @@ def _normalize_database_url(url: str) -> str:
     return url
 
 
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    try:
+        value = int(raw) if raw is not None else default
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 DATABASE_URL = _normalize_database_url(os.getenv("DATABASE_URL", _DEFAULT_DATABASE_URL))
 IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
 engine_kwargs = {}
 if IS_SQLITE:
     engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    engine_kwargs["pool_size"] = _env_int("DB_POOL_SIZE", 10, 1, 100)
+    engine_kwargs["max_overflow"] = _env_int("DB_MAX_OVERFLOW", 20, 0, 200)
+    engine_kwargs["pool_timeout"] = _env_int("DB_POOL_TIMEOUT_SECONDS", 30, 1, 300)
+    engine_kwargs["pool_recycle"] = _env_int("DB_POOL_RECYCLE_SECONDS", 1800, 30, 86400)
+    engine_kwargs["pool_pre_ping"] = True
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

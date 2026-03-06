@@ -16,14 +16,14 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from job_service import (
-    claim_next_pending_job,
-    count_due_queue_backlog,
-    count_queue_backlog,
+    claim_pending_jobs,
     enqueue_due_schedules,
+    get_queue_metrics,
     process_job_by_id,
     recover_stale_running_jobs,
     update_worker_heartbeat,
 )
+from sqlite_worker_lock import SqliteWorkerLock
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,7 @@ class EmbeddedWorker:
         self.worker_id = (
             f"api-embedded-{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         )
+        self._sqlite_lock = SqliteWorkerLock(owner=f"embedded-worker:{self.worker_id}")
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -65,11 +66,19 @@ class EmbeddedWorker:
             return
         if self._thread and self._thread.is_alive():
             return
+        if not self._sqlite_lock.acquire():
+            logger.warning(
+                "Embedded worker disabled because another SQLite worker lock is active."
+            )
+            return
 
         try:
             started_at = datetime.now(timezone.utc)
             update_worker_heartbeat(self.worker_id, started_at=started_at)
-            recovered = recover_stale_running_jobs(max_age_seconds=int(self.stale_running_seconds))
+            recovered = recover_stale_running_jobs(
+                max_age_seconds=int(self.stale_running_seconds),
+                worker_stale_seconds=max(15, int(self.heartbeat_seconds) * 3),
+            )
             logger.info(
                 "Embedded worker started worker_id=%s recovered_stale_running_jobs=%s",
                 self.worker_id,
@@ -78,6 +87,7 @@ class EmbeddedWorker:
         except Exception:
             # Keep API available even if local embedded worker initialization fails.
             logger.exception("Embedded worker failed to initialize; continuing without embedded worker.")
+            self._sqlite_lock.release()
             return
 
         self._stop.clear()
@@ -93,6 +103,7 @@ class EmbeddedWorker:
             return
         self._stop.set()
         self._thread.join(timeout=timeout_seconds)
+        self._sqlite_lock.release()
         logger.info("Embedded worker stopped worker_id=%s", self.worker_id)
 
     def _run_loop(self) -> None:
@@ -123,7 +134,8 @@ class EmbeddedWorker:
             if now - last_recovery_check >= self.recovery_check_seconds:
                 try:
                     recovered = recover_stale_running_jobs(
-                        max_age_seconds=int(self.stale_running_seconds)
+                        max_age_seconds=int(self.stale_running_seconds),
+                        worker_stale_seconds=max(15, int(self.heartbeat_seconds) * 3),
                     )
                     if recovered:
                         logger.warning(
@@ -136,23 +148,29 @@ class EmbeddedWorker:
                 last_recovery_check = now
 
             try:
-                job_id = claim_next_pending_job(worker_id=self.worker_id)
+                claimed_job_ids = claim_pending_jobs(
+                    worker_id=self.worker_id,
+                    batch_size=2,
+                )
             except Exception:
                 logger.exception("Embedded worker failed while claiming next job.")
                 self._stop.wait(self.poll_seconds)
                 continue
 
-            if job_id is None:
+            if not claimed_job_ids:
                 self._stop.wait(self.poll_seconds)
                 continue
 
+            metrics = get_queue_metrics()
             logger.info(
-                "Embedded worker processing job=%s pending_backlog=%s due_backlog=%s",
-                job_id,
-                count_queue_backlog(),
-                count_due_queue_backlog(),
+                "Embedded worker claimed_jobs=%s pending_backlog=%s due_backlog=%s running=%s",
+                len(claimed_job_ids),
+                metrics.queue_backlog,
+                metrics.due_backlog,
+                metrics.running_jobs,
             )
-            try:
-                process_job_by_id(job_id)
-            except Exception:
-                logger.exception("Embedded worker failed while processing job id=%s", job_id)
+            for job_id in claimed_job_ids:
+                try:
+                    process_job_by_id(job_id)
+                except Exception:
+                    logger.exception("Embedded worker failed while processing job id=%s", job_id)

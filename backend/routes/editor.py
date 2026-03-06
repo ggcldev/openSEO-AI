@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
+from job_service import _extract_editor_context_html
 from scrapling_core.models import OptimizationJob
 
 router = APIRouter()
@@ -28,11 +29,13 @@ class EditorUpdateRequest(BaseModel):
 
 
 def _to_editor_document(job: OptimizationJob) -> EditorDocument:
+    source_html = job.source_html or ""
+    editor_source_html = _extract_editor_context_html(source_html) or source_html
     return EditorDocument(
         id=job.id,
         url=job.url,
         status=job.status,
-        source_html=job.source_html,
+        source_html=editor_source_html,
         optimized_html=job.optimized_html,
         created_at=job.created_at.isoformat() if job.created_at else "",
         finished_at=job.finished_at.isoformat() if job.finished_at else None,

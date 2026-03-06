@@ -6,6 +6,8 @@ import { HtmlEditorPanel } from "@/components/HtmlEditorPanel";
 import { getHistoryItem } from "@/lib/apiClient";
 import type { HistoryItem } from "@/types";
 
+const MAX_JOB_ID = 2_147_483_647;
+
 export default function EditorPage() {
   const params = useParams<{ jobId: string }>();
   const router = useRouter();
@@ -15,7 +17,7 @@ export default function EditorPage() {
 
   const jobId = useMemo(() => {
     const value = Number(params?.jobId || "");
-    return Number.isFinite(value) && value > 0 ? value : null;
+    return Number.isFinite(value) && value > 0 && value <= MAX_JOB_ID ? value : null;
   }, [params?.jobId]);
 
   const version = searchParams.get("version") === "optimized" ? "optimized" : "source";

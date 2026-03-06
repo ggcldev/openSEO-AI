@@ -1,7 +1,9 @@
+export type Goal = "leads" | "awareness" | "product_info";
+
 export interface OptimizeRequest {
   url: string;
   keyword?: string;
-  goal?: string;
+  goal?: Goal;
   num_competitors?: number;
 }
 
@@ -18,7 +20,7 @@ export interface HistoryItem {
   id: number;
   url: string;
   keyword: string;
-  goal: string | null;
+  goal: Goal | null;
   num_competitors: number | null;
   pipeline_mode: "scan" | "full" | "optimize" | null;
   status: "pending" | "running" | "done" | "failed";
@@ -68,6 +70,7 @@ export interface HistoryFilters {
   keyword?: string;
   url?: string;
   limit?: number;
+  include_audit?: boolean;
 }
 
 export interface EditorDocument {
@@ -85,7 +88,7 @@ export interface ScheduleItem {
   name: string;
   url: string;
   keyword: string;
-  goal: "leads" | "awareness" | "product_info";
+  goal: Goal;
   num_competitors: number;
   interval_minutes: number;
   is_active: boolean;
@@ -99,7 +102,7 @@ export interface ScheduleCreateRequest {
   name: string;
   url: string;
   keyword?: string;
-  goal?: "leads" | "awareness" | "product_info";
+  goal?: Goal;
   num_competitors?: number;
   interval_minutes?: number;
   start_at?: string;
@@ -128,6 +131,7 @@ export interface ReliabilitySummary {
   running_jobs: number;
   stale_running_jobs: number;
   active_workers: number;
+  heartbeat_enabled: boolean;
   database_backend: string;
 
   submitted_jobs: number;

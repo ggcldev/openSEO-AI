@@ -4,8 +4,16 @@ Outputs clean, optimized HTML tailored to the page's intent type.
 """
 import os
 import re
+from typing import Optional
 
 from langchain_core.prompts import PromptTemplate
+
+from scrapling_core.llm_runtime import LlmInvocationError, invoke_chain_with_retry
+from scrapling_core.style_profile import format_style_profile
+
+MIN_REWRITE_WORDS = 1100
+_SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style|noscript|iframe)\b[^>]*>.*?</\1>")
+_HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
 
 
 EDITOR_PROMPT = PromptTemplate(
@@ -13,9 +21,11 @@ EDITOR_PROMPT = PromptTemplate(
         "keyword",
         "intent",
         "page_type",
+        "minimum_word_count",
         "original_text",
         "original_html_excerpt",
         "existing_images",
+        "style_profile",
         "title",
         "recommendations",
         "custom_instructions",
@@ -25,6 +35,7 @@ EDITOR_PROMPT = PromptTemplate(
 Target keyword: {keyword}
 Page intent: {intent}
 Page type: {page_type}
+Minimum body word count: {minimum_word_count}
 
 CURRENT TITLE TAG:
 {title}
@@ -41,11 +52,15 @@ ORIGINAL HTML EXCERPT:
 EXISTING IMAGE TAGS:
 {existing_images}
 
+STYLE PROFILE TO PRESERVE:
+{style_profile}
+
 CUSTOM OPTIMIZATION INSTRUCTIONS:
 {custom_instructions}
 
 Instructions:
 - Apply ALL the listed recommendations to produce optimized content.
+- Treat this as an in-place optimization pass. Improve weak areas, but preserve most existing messaging flow.
 - CRITICAL: Maintain the page's intent and type. If it's a service page, keep it as a service page. If it's a blog, keep it as a blog. Do NOT change the page type.
 - Output clean HTML that a dev team can directly use.
 - Include these elements in order:
@@ -70,10 +85,14 @@ For ALL pages:
 - Use <h1> for main heading (only one), <h2> for sections, <h3> for sub-sections
 - Use <p> for paragraphs, <ul>/<li> for lists
 - Use <strong> for important keywords (sparingly)
+- Preserve the source voice, diction, and tone profile from STYLE PROFILE TO PRESERVE.
+- Keep section order unless a recommendation explicitly requires adding/repositioning a section.
 - Preserve meaningful existing images from the original page whenever possible.
 - Keep existing image URLs and attributes when preserving images (src, srcset, alt, width, height, loading, decoding).
 - Do not invent new remote image URLs unless explicitly requested by custom instructions.
-- Preserve the original tone — optimize, don't rewrite from scratch
+- GEO/AEO focus: strengthen direct answer intent with concise answer-first paragraphs, query-style FAQs, and entity-rich clarifications.
+- GEO/AEO focus: prefer precise factual wording and scannable bullets over generic marketing filler.
+- Ensure the rewritten body content is at least {minimum_word_count} words.
 - Naturally incorporate the target keyword
 - Do NOT include <html>, <head>, <body>, or <style> tags
 - Do NOT wrap output in markdown code fences
@@ -85,6 +104,28 @@ def _truncate(text: str, max_chars: int = 8000) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "\n[... truncated ...]"
+
+
+def _normalize_llm_html(raw_html: str) -> str:
+    html = (raw_html or "").strip()
+    if html.startswith("```html"):
+        html = html[7:]
+    if html.startswith("```"):
+        html = html[3:]
+    if html.endswith("```"):
+        html = html[:-3]
+    return html.strip()
+
+
+def _count_words_from_html(html: str) -> int:
+    if not html:
+        return 0
+    stripped = _SCRIPT_STYLE_RE.sub(" ", html)
+    stripped = _HTML_TAG_RE.sub(" ", stripped)
+    normalized = re.sub(r"\s+", " ", stripped).strip()
+    if not normalized:
+        return 0
+    return len(normalized.split())
 
 
 def _extract_image_tags(source_html: str, limit: int = 30) -> str:
@@ -113,7 +154,57 @@ def _extract_image_tags(source_html: str, limit: int = 30) -> str:
 
 def _custom_instructions() -> str:
     value = (os.getenv("EDITOR_PROMPT_APPEND") or "").strip()
-    return value or "None."
+    if not value:
+        return "None."
+    return _truncate(value, 1200)
+
+
+def _model_name(llm) -> str:
+    value = getattr(llm, "model_name", None) or getattr(llm, "model", None) or ""
+    return str(value).strip()
+
+
+def _invoke_editor_with_fallback(llm, payload: dict, *, stage: str) -> str:
+    """
+    Invoke editor rewrite using primary model first, then Groq fallback models on rate limits.
+    """
+    primary_chain = EDITOR_PROMPT | llm
+    try:
+        return invoke_chain_with_retry(primary_chain, payload, stage=stage)
+    except LlmInvocationError as exc:
+        if exc.code != "llm_rate_limited":
+            raise
+
+    try:
+        from config import get_groq_fallback_llms, llm_provider
+    except Exception:
+        raise
+
+    if llm_provider() != "groq":
+        raise RuntimeError("Editor rewrite hit provider rate limit and no fallback provider is configured.")
+
+    primary_model = _model_name(llm)
+    last_rate_limit: LlmInvocationError | None = None
+    for fallback_llm in get_groq_fallback_llms(exclude_model=primary_model):
+        try:
+            fallback_chain = EDITOR_PROMPT | fallback_llm
+            return invoke_chain_with_retry(fallback_chain, payload, stage=stage)
+        except LlmInvocationError as fallback_exc:
+            if fallback_exc.code == "llm_rate_limited":
+                last_rate_limit = fallback_exc
+                continue
+            raise
+
+    wait_hint = ""
+    if last_rate_limit:
+        message = last_rate_limit.message
+        retry_match = re.search(r"please try again in\s+([0-9a-z\.\:]+)", message, re.IGNORECASE)
+        if retry_match:
+            wait_hint = f" Retry after approximately {retry_match.group(1)}."
+    raise RuntimeError(
+        "All configured Groq rewrite models are currently rate limited."
+        f"{wait_hint} You can set GROQ_FALLBACK_MODELS or increase token quota."
+    )
 
 
 def run_editor(
@@ -124,6 +215,7 @@ def run_editor(
     audit: dict,
     intent_data: dict = None,
     original_html: str = "",
+    style_profile: Optional[dict] = None,
 ) -> str:
     """
     Run the Editor Agent to produce optimized HTML content.
@@ -143,6 +235,10 @@ def run_editor(
     intent_data = intent_data or {}
     intent = intent_data.get("intent", "informational")
     page_type = intent_data.get("page_type", "service")
+    min_word_count = MIN_REWRITE_WORDS
+    serp_avg = audit.get("word_count", {}).get("serp_avg") if isinstance(audit, dict) else None
+    if isinstance(serp_avg, (int, float)) and serp_avg > 0:
+        min_word_count = max(MIN_REWRITE_WORDS, int(round(serp_avg)))
 
     # Format recommendations
     rec_lines = []
@@ -158,7 +254,7 @@ def run_editor(
     headings_plan = audit.get("headings_plan", {})
     if headings_plan.get("recommended_h1"):
         rec_lines.append(f"H1: {headings_plan['recommended_h1']}")
-    for item in headings_plan.get("outline", [])[:20]:
+    for item in headings_plan.get("outline", [])[:10]:
         rec_lines.append(
             f"HEADING [{item.get('tag', 'h2')}][{item.get('status', 'add')}]: "
             f"{item.get('text', '')} ({item.get('note', 'no note')})"
@@ -170,10 +266,36 @@ def run_editor(
     if audit.get("keyword_usage", {}).get("recommendation"):
         rec_lines.append(f"KEYWORDS: {audit['keyword_usage']['recommendation']}")
 
-    for gap in audit.get("content_gaps", []):
+    geo_aeo = audit.get("geo_aeo", {}) if isinstance(audit, dict) else {}
+    for fix in geo_aeo.get("priority_fixes", [])[:5]:
+        rec_lines.append(f"GEO_AEO_FIX: {fix}")
+    for block in geo_aeo.get("answer_blocks", [])[:4]:
+        if not isinstance(block, dict):
+            continue
+        rec_lines.append(
+            "AEO_ANSWER_BLOCK: "
+            f"Q={block.get('question', '')} | "
+            f"A={block.get('answer', '')} | "
+            f"PLACEMENT={block.get('placement', '')}"
+        )
+    for schema in geo_aeo.get("schema_recommendations", [])[:3]:
+        rec_lines.append(f"SCHEMA_HINT: {schema}")
+
+    style_guardrails = audit.get("style_guardrails", {}) if isinstance(audit, dict) else {}
+    if isinstance(style_guardrails, dict):
+        if style_guardrails.get("voice"):
+            rec_lines.append(f"STYLE_VOICE: {style_guardrails.get('voice')}")
+        if style_guardrails.get("formality"):
+            rec_lines.append(f"STYLE_FORMALITY: {style_guardrails.get('formality')}")
+        for item in (style_guardrails.get("do") or [])[:4]:
+            rec_lines.append(f"STYLE_DO: {item}")
+        for item in (style_guardrails.get("avoid") or [])[:4]:
+            rec_lines.append(f"STYLE_AVOID: {item}")
+
+    for gap in (audit.get("content_gaps", []) or [])[:8]:
         rec_lines.append(f"CONTENT GAP: Add coverage of \"{gap}\"")
 
-    for rec in sorted(audit.get("checklist", []), key=lambda x: x.get("priority", 999)):
+    for rec in sorted(audit.get("checklist", []), key=lambda x: x.get("priority", 999))[:8]:
         rec_lines.append(
             f"#{rec.get('priority', '-')}: {rec.get('task', '')} at {rec.get('location', '')}"
         )
@@ -185,33 +307,55 @@ def run_editor(
         rec_lines.append(f"META: {audit['meta_description']['recommendation']}")
     if audit.get("headings", {}).get("recommendation"):
         rec_lines.append(f"HEADINGS: {audit['headings']['recommendation']}")
-    for rec in audit.get("recommendations", []):
+    for rec in (audit.get("recommendations", []) or [])[:8]:
         rec_lines.append(
             f"#{rec.get('priority', '-')} [{rec.get('type', '')}]: {rec.get('action', '')}"
         )
 
+    rec_lines.append(
+        f"MIN_WORD_COUNT: Ensure the rewritten body content has at least {min_word_count} words."
+    )
     recommendations_str = "\n".join(rec_lines) if rec_lines else "No specific recommendations."
 
-    chain = EDITOR_PROMPT | llm
-    result = chain.invoke({
+    payload = {
         "keyword": keyword,
         "intent": intent,
         "page_type": page_type,
-        "original_text": _truncate(original_text, 6000),
-        "original_html_excerpt": _truncate(original_html, 8000),
+        "minimum_word_count": min_word_count,
+        "original_text": _truncate(original_text, 4200),
+        "original_html_excerpt": _truncate(original_html, 3800),
         "existing_images": _extract_image_tags(original_html, limit=40),
+        "style_profile": _truncate(format_style_profile(style_profile), 1200),
         "title": title or "(no title)",
         "recommendations": recommendations_str,
         "custom_instructions": _custom_instructions(),
-    })
+    }
+    html = _normalize_llm_html(
+        _invoke_editor_with_fallback(
+            llm,
+            payload,
+            stage="editor_rewrite",
+        )
+    )
+    generated_word_count = _count_words_from_html(html)
+    if generated_word_count < min_word_count:
+        payload["recommendations"] = (
+            f"{recommendations_str}\n"
+            f"WORD_COUNT_ENFORCEMENT: Your previous draft had {generated_word_count} words. "
+            f"Expand with meaningful, non-repetitive detail until the body has at least {min_word_count} words."
+        )
+        html = _normalize_llm_html(
+            _invoke_editor_with_fallback(
+                llm,
+                payload,
+                stage="editor_rewrite",
+            )
+        )
+        generated_word_count = _count_words_from_html(html)
 
-    html = result.content.strip()
-
-    if html.startswith("```html"):
-        html = html[7:]
-    if html.startswith("```"):
-        html = html[3:]
-    if html.endswith("```"):
-        html = html[:-3]
+    if generated_word_count < min_word_count:
+        raise RuntimeError(
+            f"Editor output word count ({generated_word_count}) is below required minimum ({min_word_count})."
+        )
 
     return html.strip()

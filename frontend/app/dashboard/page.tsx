@@ -1,71 +1,229 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { JobDetailPanel } from "@/components/JobDetailPanel";
-import { TableResults } from "@/components/TableResults";
+import { AutomationPanel } from "@/components/dashboard/AutomationPanel";
+import { HistorySection } from "@/components/dashboard/HistorySection";
+import { ScanForm } from "@/components/dashboard/ScanForm";
 import {
   bulkUploadXlsx,
   createSchedule,
   deactivateSchedule,
   getHistory,
+  getHistoryItem,
   getSchedules,
   optimizeExistingJob,
   runScheduleNow,
   submitScan,
 } from "@/lib/apiClient";
-import type { HistoryItem, ScheduleItem } from "@/types";
+import type { Goal, HistoryItem, ScheduleItem } from "@/types";
+import {
+  DASHBOARD_HISTORY_HIDDEN_POLL_MS,
+  DASHBOARD_HISTORY_PENDING_POLL_MS,
+  DASHBOARD_HISTORY_RUNNING_POLL_MS,
+} from "@/lib/constants";
+import { useClickOutside } from "@/hooks/useClickOutside";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
+import { Notice, setErrorNotice } from "@/lib/notice";
+
+const GOAL_OPTIONS: Goal[] = ["leads", "awareness", "product_info"];
+const JOB_STATUS_VALUES: HistoryItem["status"][] = ["pending", "running", "done", "failed"];
+const PIPELINE_MODE_VALUES: NonNullable<HistoryItem["pipeline_mode"]>[] = [
+  "scan",
+  "full",
+  "optimize",
+];
+
+interface ScheduleFormState {
+  name: string;
+  url: string;
+  keyword: string;
+  goal: Goal;
+  numCompetitors: number;
+  intervalMinutes: number;
+}
+
+const INITIAL_SCHEDULE_FORM: ScheduleFormState = {
+  name: "",
+  url: "",
+  keyword: "",
+  goal: "leads",
+  numCompetitors: 10,
+  intervalMinutes: 1440,
+};
+
+type ScheduleFormAction =
+  | { type: "set_name"; value: string }
+  | { type: "set_url"; value: string }
+  | { type: "set_keyword"; value: string }
+  | { type: "set_goal"; value: Goal }
+  | { type: "set_num_competitors"; value: number }
+  | { type: "set_interval_minutes"; value: number }
+  | { type: "reset" };
+
+function scheduleFormReducer(
+  state: ScheduleFormState,
+  action: ScheduleFormAction,
+): ScheduleFormState {
+  switch (action.type) {
+    case "set_name":
+      return { ...state, name: action.value };
+    case "set_url":
+      return { ...state, url: action.value };
+    case "set_keyword":
+      return { ...state, keyword: action.value };
+    case "set_goal":
+      return { ...state, goal: action.value };
+    case "set_num_competitors":
+      return { ...state, numCompetitors: action.value };
+    case "set_interval_minutes":
+      return { ...state, intervalMinutes: action.value };
+    case "reset":
+      return INITIAL_SCHEDULE_FORM;
+    default:
+      return state;
+  }
+}
+
+function toGoal(value: string, fallback: Goal = "leads"): Goal {
+  return GOAL_OPTIONS.includes(value as Goal) ? (value as Goal) : fallback;
+}
+
+function toNumberOrFallback(value: string, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function normalizeStatus(status: string): HistoryItem["status"] {
+  return JOB_STATUS_VALUES.includes(status as HistoryItem["status"])
+    ? (status as HistoryItem["status"])
+    : "pending";
+}
+
+function normalizePipelineMode(mode: string): HistoryItem["pipeline_mode"] {
+  return PIPELINE_MODE_VALUES.includes(mode as NonNullable<HistoryItem["pipeline_mode"]>)
+    ? (mode as NonNullable<HistoryItem["pipeline_mode"]>)
+    : "full";
+}
+
+function createOptimisticHistoryItem(input: {
+  id: number;
+  url: string;
+  keyword?: string;
+  goal?: Goal | null;
+  numCompetitors?: number | null;
+  status: HistoryItem["status"];
+  pipelineMode: HistoryItem["pipeline_mode"];
+}): HistoryItem {
+  return {
+    id: input.id,
+    url: input.url,
+    keyword: input.keyword || "",
+    goal: input.goal ?? null,
+    num_competitors: input.numCompetitors ?? null,
+    pipeline_mode: input.pipelineMode,
+    status: input.status,
+    detected_intent: null,
+    page_type: null,
+    region: null,
+    language: null,
+    error_stage: null,
+    error_code: null,
+    error_message: null,
+    audit_result: null,
+    has_source_html: false,
+    has_export: false,
+    can_optimize: false,
+    created_at: new Date().toISOString(),
+    finished_at: null,
+  };
+}
 
 export default function Dashboard() {
   const [url, setUrl] = useState("");
   const [keyword, setKeyword] = useState("");
   const [showSettings, setShowSettings] = useState(false);
-  const [goal, setGoal] = useState("leads");
+  const [goal, setGoal] = useState<Goal>("leads");
   const [numCompetitors, setNumCompetitors] = useState(10);
 
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<Notice | null>(null);
 
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [historyMessage, setHistoryMessage] = useState("");
+  const [historyMessage, setHistoryMessage] = useState<Notice | null>(null);
   const [filterStatus, setFilterStatus] = useState("");
   const [detailsJobId, setDetailsJobId] = useState<number | null>(null);
+  const [detailsItem, setDetailsItem] = useState<HistoryItem | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [optimizingJobId, setOptimizingJobId] = useState<number | null>(null);
   const [retryScanJobId, setRetryScanJobId] = useState<number | null>(null);
 
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
-  const [bulkMessage, setBulkMessage] = useState("");
+  const [bulkMessage, setBulkMessage] = useState<Notice | null>(null);
 
   const [schedules, setSchedules] = useState<ScheduleItem[]>([]);
-  const [scheduleName, setScheduleName] = useState("");
-  const [scheduleUrl, setScheduleUrl] = useState("");
-  const [scheduleKeyword, setScheduleKeyword] = useState("");
-  const [scheduleGoal, setScheduleGoal] = useState("leads");
-  const [scheduleNumCompetitors, setScheduleNumCompetitors] = useState(10);
-  const [scheduleIntervalMinutes, setScheduleIntervalMinutes] = useState(1440);
+  const [scheduleForm, dispatchScheduleForm] = useReducer(
+    scheduleFormReducer,
+    INITIAL_SCHEDULE_FORM,
+  );
   const [scheduleLoading, setScheduleLoading] = useState(false);
-  const [scheduleMessage, setScheduleMessage] = useState("");
+  const [scheduleMessage, setScheduleMessage] = useState<Notice | null>(null);
   const [opsTab, setOpsTab] = useState<"bulk" | "schedule">("bulk");
   const [showAutomation, setShowAutomation] = useState(false);
   const automationMenuRef = useRef<HTMLDivElement | null>(null);
+  const historyAbortRef = useRef<AbortController | null>(null);
+  const schedulesAbortRef = useRef<AbortController | null>(null);
+  const detailsRequestRef = useRef(0);
 
   const fetchHistory = useCallback(async () => {
+    const controller = new AbortController();
+    historyAbortRef.current?.abort();
+    historyAbortRef.current = controller;
+
     try {
-      const items = await getHistory({ status: filterStatus || undefined });
+      const items = await getHistory(
+        { status: filterStatus || undefined, include_audit: false },
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
       setHistory(items);
-      setHistoryMessage("");
+      setHistoryMessage(null);
     } catch (err) {
-      setHistoryMessage(`Error: ${err instanceof Error ? err.message : "Failed to load history"}`);
+      if (controller.signal.aborted) return;
+      setErrorNotice(setHistoryMessage, err, "Failed to load audit runs");
+    } finally {
+      if (historyAbortRef.current === controller) {
+        historyAbortRef.current = null;
+      }
     }
   }, [filterStatus]);
 
   const fetchSchedules = useCallback(async () => {
+    const controller = new AbortController();
+    schedulesAbortRef.current?.abort();
+    schedulesAbortRef.current = controller;
+
     try {
-      setSchedules(await getSchedules());
-      setScheduleMessage("");
+      const items = await getSchedules(undefined, controller.signal);
+      if (controller.signal.aborted) return;
+      setSchedules(items);
+      setScheduleMessage(null);
     } catch (err) {
-      setScheduleMessage(`Error: ${err instanceof Error ? err.message : "Failed to load schedules"}`);
+      if (controller.signal.aborted) return;
+      setErrorNotice(setScheduleMessage, err, "Failed to load schedules");
+    } finally {
+      if (schedulesAbortRef.current === controller) {
+        schedulesAbortRef.current = null;
+      }
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      historyAbortRef.current?.abort();
+      schedulesAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -73,55 +231,52 @@ export default function Dashboard() {
     fetchSchedules();
   }, [fetchHistory, fetchSchedules]);
 
-  useEffect(() => {
-    if (!history.some((j) => j.status === "pending" || j.status === "running")) return;
-    const i = setInterval(() => {
-      fetchHistory();
-    }, 3000);
-    return () => clearInterval(i);
-  }, [history, fetchHistory]);
+  useHistoryPolling({
+    history,
+    fetchHistory,
+    runningIntervalMs: DASHBOARD_HISTORY_RUNNING_POLL_MS,
+    pendingIntervalMs: DASHBOARD_HISTORY_PENDING_POLL_MS,
+    hiddenIntervalMs: DASHBOARD_HISTORY_HIDDEN_POLL_MS,
+  });
 
-  useEffect(() => {
-    if (!showAutomation) return;
-
-    function onPointerDown(event: MouseEvent) {
-      if (!automationMenuRef.current) return;
-      if (automationMenuRef.current.contains(event.target as Node)) return;
-      setShowAutomation(false);
-    }
-
-    function onEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setShowAutomation(false);
-    }
-
-    window.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("keydown", onEscape);
-    return () => {
-      window.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("keydown", onEscape);
-    };
-  }, [showAutomation]);
+  useClickOutside(automationMenuRef, () => setShowAutomation(false), {
+    enabled: showAutomation,
+    closeOnEscape: true,
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url.trim()) return;
+    const targetUrl = url.trim();
+    const targetKeyword = keyword.trim();
+    if (!targetUrl) return;
+
     setLoading(true);
-    setMessage("");
+    setMessage(null);
     try {
       const res = await submitScan({
-        url,
-        keyword: keyword || undefined,
+        url: targetUrl,
+        keyword: targetKeyword || undefined,
         goal,
         num_competitors: numCompetitors,
       });
-      setMessage(`${res.message} Job #${res.id}.`);
+      setMessage({ kind: "success", text: `${res.message} Job #${res.id}.` });
+      setHistory((prev) => [
+        createOptimisticHistoryItem({
+          id: res.id,
+          url: targetUrl,
+          keyword: targetKeyword || res.keyword,
+          goal,
+          numCompetitors,
+          status: normalizeStatus(res.status),
+          pipelineMode: normalizePipelineMode(res.pipeline_mode),
+        }),
+        ...prev.filter((item) => item.id !== res.id),
+      ]);
       setUrl("");
       setKeyword("");
-      setTimeout(() => {
-        fetchHistory();
-      }, 1500);
+      void fetchHistory();
     } catch (err) {
-      setMessage(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setErrorNotice(setMessage, err, "Failed to submit scan.");
     } finally {
       setLoading(false);
     }
@@ -131,16 +286,17 @@ export default function Dashboard() {
     e.preventDefault();
     if (!bulkFile) return;
     setBulkLoading(true);
-    setBulkMessage("");
+    setBulkMessage(null);
     try {
       const result = await bulkUploadXlsx(bulkFile);
-      setBulkMessage(`Queued ${result.submitted_count} jobs, rejected ${result.rejected_count} rows.`);
+      setBulkMessage({
+        kind: "success",
+        text: `Queued ${result.submitted_count} jobs, rejected ${result.rejected_count} rows.`,
+      });
       setBulkFile(null);
-      setTimeout(() => {
-        fetchHistory();
-      }, 1500);
+      void fetchHistory();
     } catch (err) {
-      setBulkMessage(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setErrorNotice(setBulkMessage, err, "Bulk upload failed.");
     } finally {
       setBulkLoading(false);
     }
@@ -148,66 +304,99 @@ export default function Dashboard() {
 
   const handleCreateSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!scheduleName.trim() || !scheduleUrl.trim()) return;
+    const scheduleName = scheduleForm.name.trim();
+    const scheduleUrl = scheduleForm.url.trim();
+    if (!scheduleName || !scheduleUrl) return;
+
     setScheduleLoading(true);
-    setScheduleMessage("");
+    setScheduleMessage(null);
     try {
       await createSchedule({
-        name: scheduleName.trim(),
-        url: scheduleUrl.trim(),
-        keyword: scheduleKeyword.trim(),
-        goal: scheduleGoal as "leads" | "awareness" | "product_info",
-        num_competitors: scheduleNumCompetitors,
-        interval_minutes: scheduleIntervalMinutes,
+        name: scheduleName,
+        url: scheduleUrl,
+        keyword: scheduleForm.keyword.trim(),
+        goal: scheduleForm.goal,
+        num_competitors: scheduleForm.numCompetitors,
+        interval_minutes: scheduleForm.intervalMinutes,
       });
-      setScheduleMessage("Schedule created.");
-      setScheduleName("");
-      setScheduleUrl("");
-      setScheduleKeyword("");
+      setScheduleMessage({ kind: "success", text: "Schedule created." });
+      dispatchScheduleForm({ type: "reset" });
       await fetchSchedules();
     } catch (err) {
-      setScheduleMessage(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setErrorNotice(setScheduleMessage, err, "Failed to create schedule.");
     } finally {
       setScheduleLoading(false);
     }
   };
 
   const handleRunScheduleNow = async (scheduleId: number) => {
-    setScheduleMessage("");
+    setScheduleMessage(null);
     try {
       const result = await runScheduleNow(scheduleId);
-      setScheduleMessage(`Schedule ${scheduleId} queued job #${result.job_id}.`);
+      const targetSchedule = schedules.find((entry) => entry.id === scheduleId);
+      setScheduleMessage({
+        kind: "success",
+        text: `Schedule ${scheduleId} queued job #${result.job_id}.`,
+      });
+      setHistory((prev) => [
+        createOptimisticHistoryItem({
+          id: result.job_id,
+          url: targetSchedule?.url || `Schedule ${scheduleId}`,
+          keyword: targetSchedule?.keyword || "",
+          goal: targetSchedule?.goal || null,
+          numCompetitors: targetSchedule?.num_competitors ?? null,
+          status: "pending",
+          pipelineMode: "full",
+        }),
+        ...prev.filter((item) => item.id !== result.job_id),
+      ]);
       await fetchSchedules();
-      setTimeout(() => {
-        fetchHistory();
-      }, 1500);
+      void fetchHistory();
     } catch (err) {
-      setScheduleMessage(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setErrorNotice(setScheduleMessage, err, "Failed to run schedule.");
     }
   };
 
   const handleDeactivateSchedule = async (scheduleId: number) => {
-    setScheduleMessage("");
+    setScheduleMessage(null);
     try {
       await deactivateSchedule(scheduleId);
-      setScheduleMessage(`Schedule ${scheduleId} deactivated.`);
+      setScheduleMessage({
+        kind: "success",
+        text: `Schedule ${scheduleId} deactivated.`,
+      });
       await fetchSchedules();
     } catch (err) {
-      setScheduleMessage(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setErrorNotice(setScheduleMessage, err, "Failed to deactivate schedule.");
     }
   };
 
   const handleOptimizeFromHistory = async (jobId: number) => {
     setOptimizingJobId(jobId);
-    setHistoryMessage("");
+    setHistoryMessage(null);
     try {
       const res = await optimizeExistingJob(jobId);
-      setHistoryMessage(`${res.message} Job #${res.id}.`);
-      setTimeout(() => {
-        fetchHistory();
-      }, 1500);
+      setHistoryMessage({ kind: "success", text: `${res.message} Job #${res.id}.` });
+      setHistory((prev) =>
+        prev.map((item) =>
+          item.id === jobId
+            ? {
+                ...item,
+                status: normalizeStatus(res.status),
+                pipeline_mode: normalizePipelineMode(res.pipeline_mode),
+                error_stage: null,
+                error_code: null,
+                error_message: null,
+                has_export: false,
+                can_optimize: false,
+                finished_at: null,
+              }
+            : item,
+        ),
+      );
+      void fetchHistory();
     } catch (err) {
-      setHistoryMessage(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setErrorNotice(setHistoryMessage, err, "Failed to optimize job.");
     } finally {
       setOptimizingJobId(null);
     }
@@ -215,7 +404,7 @@ export default function Dashboard() {
 
   const handleRetryScanFromHistory = async (item: HistoryItem) => {
     setRetryScanJobId(item.id);
-    setHistoryMessage("");
+    setHistoryMessage(null);
     try {
       const res = await submitScan({
         url: item.url,
@@ -223,12 +412,22 @@ export default function Dashboard() {
         goal: item.goal || "leads",
         num_competitors: item.num_competitors ?? 10,
       });
-      setHistoryMessage(`Scan retried as job #${res.id}.`);
-      setTimeout(() => {
-        fetchHistory();
-      }, 1500);
+      setHistoryMessage({ kind: "success", text: `Scan retried as job #${res.id}.` });
+      setHistory((prev) => [
+        createOptimisticHistoryItem({
+          id: res.id,
+          url: item.url,
+          keyword: item.keyword,
+          goal: item.goal,
+          numCompetitors: item.num_competitors,
+          status: normalizeStatus(res.status),
+          pipelineMode: normalizePipelineMode(res.pipeline_mode),
+        }),
+        ...prev.filter((entry) => entry.id !== res.id),
+      ]);
+      void fetchHistory();
     } catch (err) {
-      setHistoryMessage(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setErrorNotice(setHistoryMessage, err, "Failed to retry scan.");
     } finally {
       setRetryScanJobId(null);
     }
@@ -239,315 +438,122 @@ export default function Dashboard() {
     window.open(url, "_blank", "noopener,noreferrer");
   }, []);
 
-  const selectedDetailsJob = detailsJobId ? history.find((h) => h.id === detailsJobId) ?? null : null;
+  const handleOpenDetails = useCallback(
+    (jobId: number) => {
+      const requestId = detailsRequestRef.current + 1;
+      detailsRequestRef.current = requestId;
+      setDetailsJobId(jobId);
+      setDetailsLoading(true);
+      setDetailsItem(history.find((entry) => entry.id === jobId) ?? null);
+
+      void getHistoryItem(jobId)
+        .then((fullItem) => {
+          if (detailsRequestRef.current !== requestId) return;
+          setDetailsItem(fullItem);
+        })
+        .catch((err) => {
+          if (detailsRequestRef.current !== requestId) return;
+          setErrorNotice(setHistoryMessage, err, "Failed to load audit details");
+        })
+        .finally(() => {
+          if (detailsRequestRef.current !== requestId) return;
+          setDetailsLoading(false);
+        });
+    },
+    [history],
+  );
+
+  const handleCloseDetails = useCallback(() => {
+    detailsRequestRef.current += 1;
+    setDetailsJobId(null);
+    setDetailsItem(null);
+    setDetailsLoading(false);
+  }, []);
+
+  const selectedDetailsJob = detailsJobId ? detailsItem : null;
 
   return (
     <div className="space-y-8">
-      <section className="border border-[#e8e8e8] rounded-2xl p-6 bg-white">
+      <section className="bg-white pb-6">
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-[20px] font-semibold text-[#1a1a1a]">SEO Optimization</h1>
-            <p className="text-[13px] text-[#888] mt-1">
+            <h1 className="text-[22px] font-semibold tracking-tight text-[#171b29]">SEO Optimization</h1>
+            <p className="mt-1 text-[14px] text-[#6f7891]">
               Scan first. Then optimize from the result row, or open it manually in the editor.
             </p>
           </div>
-
-          <div ref={automationMenuRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setShowAutomation((v) => !v)}
-              className="h-[38px] px-3 rounded-lg border border-[#ddd] text-[12px] text-[#555] hover:border-[#bbb] bg-white"
-            >
-              {showAutomation ? "Close Automation" : "Automation"}
-            </button>
-
-            {showAutomation && (
-              <div className="absolute right-0 top-[calc(100%+10px)] z-20 w-[min(92vw,760px)] rounded-xl border border-[#e8e8e8] bg-white shadow-[0_16px_40px_rgba(0,0,0,0.12)] overflow-hidden">
-                <div className="px-4 py-3 border-b border-[#efefef]">
-                  <p className="text-[13px] font-semibold text-[#1a1a1a]">Batch & Automation</p>
-                  <p className="text-[12px] text-[#888] mt-0.5">Bulk upload and recurring scan operations.</p>
-                </div>
-
-                <div className="p-4 max-h-[70vh] overflow-auto">
-                  <div className="inline-flex p-1 bg-[#f4f4f4] rounded-lg mb-4">
-                    <button
-                      type="button"
-                      onClick={() => setOpsTab("bulk")}
-                      className={`px-3 py-1.5 text-[12px] rounded-md ${opsTab === "bulk" ? "bg-white border border-[#ddd] text-[#1a1a1a]" : "text-[#777]"}`}
-                    >
-                      Bulk Upload
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOpsTab("schedule")}
-                      className={`px-3 py-1.5 text-[12px] rounded-md ${opsTab === "schedule" ? "bg-white border border-[#ddd] text-[#1a1a1a]" : "text-[#777]"}`}
-                    >
-                      Schedules
-                    </button>
-                  </div>
-
-                  {opsTab === "bulk" && (
-                    <form onSubmit={handleBulkUpload} className="space-y-3">
-                      <p className="text-[12px] text-[#777]">
-                        Expected columns: <code>url</code> (required), <code>keyword</code>, <code>goal</code>,{" "}
-                        <code>num_competitors</code>
-                      </p>
-                      <input
-                        type="file"
-                        accept=".xlsx"
-                        onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
-                        className="w-full text-[12px] text-[#666] border border-[#e0e0e0] rounded-lg px-3 py-2 bg-[#f7f7f7]"
-                      />
-                      <button
-                        type="submit"
-                        disabled={bulkLoading || !bulkFile}
-                        className="bg-[#1a1a1a] text-[#fcfcfc] text-[12px] font-medium px-4 py-2 rounded-lg hover:bg-[#333] disabled:opacity-30"
-                      >
-                        {bulkLoading ? "Uploading..." : "Upload & Queue"}
-                      </button>
-                      {bulkMessage && (
-                        <p className={`text-[12px] ${bulkMessage.startsWith("Error") ? "text-red-600" : "text-[#666]"}`}>
-                          {bulkMessage}
-                        </p>
-                      )}
-                    </form>
-                  )}
-
-                  {opsTab === "schedule" && (
-                    <div className="grid lg:grid-cols-2 gap-4">
-                      <form onSubmit={handleCreateSchedule} className="space-y-3">
-                        <input
-                          type="text"
-                          value={scheduleName}
-                          onChange={(e) => setScheduleName(e.target.value)}
-                          placeholder="Schedule name"
-                          className="w-full bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px]"
-                          required
-                        />
-                        <input
-                          type="url"
-                          value={scheduleUrl}
-                          onChange={(e) => setScheduleUrl(e.target.value)}
-                          placeholder="https://example.com/page"
-                          className="w-full bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px]"
-                          required
-                        />
-                        <input
-                          type="text"
-                          value={scheduleKeyword}
-                          onChange={(e) => setScheduleKeyword(e.target.value)}
-                          placeholder="Keyword (optional)"
-                          className="w-full bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px]"
-                        />
-                        <div className="grid grid-cols-3 gap-2">
-                          <select
-                            value={scheduleGoal}
-                            onChange={(e) => setScheduleGoal(e.target.value)}
-                            className="bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-2 py-2 text-[12px]"
-                          >
-                            <option value="leads">Leads</option>
-                            <option value="awareness">Awareness</option>
-                            <option value="product_info">Product Info</option>
-                          </select>
-                          <input
-                            type="number"
-                            min={3}
-                            max={20}
-                            value={scheduleNumCompetitors}
-                            onChange={(e) => setScheduleNumCompetitors(Number(e.target.value))}
-                            className="bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-2 py-2 text-[12px]"
-                            title="Competitors"
-                          />
-                          <input
-                            type="number"
-                            min={15}
-                            max={10080}
-                            value={scheduleIntervalMinutes}
-                            onChange={(e) => setScheduleIntervalMinutes(Number(e.target.value))}
-                            className="bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-2 py-2 text-[12px]"
-                            title="Interval minutes"
-                          />
-                        </div>
-                        <button
-                          type="submit"
-                          disabled={scheduleLoading}
-                          className="bg-[#1a1a1a] text-[#fcfcfc] text-[12px] font-medium px-4 py-2 rounded-lg hover:bg-[#333] disabled:opacity-30"
-                        >
-                          {scheduleLoading ? "Creating..." : "Create Schedule"}
-                        </button>
-                        {scheduleMessage && (
-                          <p className={`text-[12px] ${scheduleMessage.startsWith("Error") ? "text-red-600" : "text-[#666]"}`}>
-                            {scheduleMessage}
-                          </p>
-                        )}
-                      </form>
-
-                      <div className="border border-[#eee] rounded-xl p-3 max-h-64 overflow-auto space-y-2">
-                        {schedules.map((s) => (
-                          <div key={s.id} className="border border-[#eee] rounded-lg p-2 text-[12px]">
-                            <p className="text-[#1a1a1a] font-medium">{s.name}</p>
-                            <p className="text-[#888] truncate">{s.url}</p>
-                            <p className="text-[#aaa]">
-                              Every {s.interval_minutes} min • next {new Date(s.next_run_at).toLocaleString()}
-                            </p>
-                            <div className="flex gap-2 mt-2">
-                              <button
-                                type="button"
-                                onClick={() => handleRunScheduleNow(s.id)}
-                                disabled={!s.is_active}
-                                className="border border-[#ddd] text-[#444] text-[11px] px-2 py-1 rounded hover:border-[#bbb] disabled:opacity-40"
-                              >
-                                Run now
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeactivateSchedule(s.id)}
-                                disabled={!s.is_active}
-                                className="border border-[#ddd] text-[#444] text-[11px] px-2 py-1 rounded hover:border-[#bbb] disabled:opacity-40"
-                              >
-                                Deactivate
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                        {schedules.length === 0 && <p className="text-[12px] text-[#aaa]">No schedules yet</p>}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          <AutomationPanel
+            showAutomation={showAutomation}
+            onToggleAutomation={() => setShowAutomation((value) => !value)}
+            automationMenuRef={automationMenuRef}
+            opsTab={opsTab}
+            onOpsTabChange={setOpsTab}
+            bulkFile={bulkFile}
+            bulkLoading={bulkLoading}
+            bulkMessage={bulkMessage}
+            onBulkUpload={handleBulkUpload}
+            onBulkFileChange={setBulkFile}
+            scheduleForm={scheduleForm}
+            scheduleLoading={scheduleLoading}
+            scheduleMessage={scheduleMessage}
+            schedules={schedules}
+            onCreateSchedule={handleCreateSchedule}
+            onScheduleNameChange={(value) => dispatchScheduleForm({ type: "set_name", value })}
+            onScheduleUrlChange={(value) => dispatchScheduleForm({ type: "set_url", value })}
+            onScheduleKeywordChange={(value) => dispatchScheduleForm({ type: "set_keyword", value })}
+            onScheduleGoalChange={(value) =>
+              dispatchScheduleForm({ type: "set_goal", value: toGoal(value, scheduleForm.goal) })
+            }
+            onScheduleNumCompetitorsChange={(value) =>
+              dispatchScheduleForm({
+                type: "set_num_competitors",
+                value: toNumberOrFallback(value, scheduleForm.numCompetitors),
+              })
+            }
+            onScheduleIntervalMinutesChange={(value) =>
+              dispatchScheduleForm({
+                type: "set_interval_minutes",
+                value: toNumberOrFallback(value, scheduleForm.intervalMinutes),
+              })
+            }
+            onRunScheduleNow={handleRunScheduleNow}
+            onDeactivateSchedule={handleDeactivateSchedule}
+          />
         </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <label htmlFor="single-url" className="text-[12px] text-[#777] uppercase tracking-wider">
-              Target URL
-            </label>
-            <input
-              id="single-url"
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://example.com/page"
-              required
-              className="w-full bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-4 py-2.5 text-[14px] text-[#1a1a1a] placeholder-[#aaa]"
-            />
-          </div>
-
-          <div className="grid md:grid-cols-[1fr_auto_auto] gap-3 items-end">
-            <div className="space-y-2">
-              <label htmlFor="single-keyword" className="text-[12px] text-[#777] uppercase tracking-wider">
-                Primary Keyword
-              </label>
-              <input
-                id="single-keyword"
-                type="text"
-                value={keyword}
-                onChange={(e) => setKeyword(e.target.value)}
-                placeholder="Optional"
-                className="w-full bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-4 py-2.5 text-[14px] text-[#1a1a1a] placeholder-[#aaa]"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowSettings(!showSettings)}
-              className="h-[42px] px-3 rounded-lg border border-[#e0e0e0] bg-[#f7f7f7] text-[13px] text-[#666] hover:border-[#cfcfcf]"
-            >
-              {showSettings ? "Hide Advanced" : "Advanced"}
-            </button>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="h-[42px] px-5 rounded-lg bg-[#1a1a1a] text-[#fcfcfc] text-[13px] font-medium hover:bg-[#333] disabled:opacity-30"
-            >
-              {loading ? "Scanning..." : "Scan"}
-            </button>
-          </div>
-
-          {showSettings && (
-            <div className="border border-[#ececec] rounded-xl p-4 grid md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label htmlFor="single-goal" className="text-[12px] text-[#777] uppercase tracking-wider">
-                  Goal
-                </label>
-                <select
-                  id="single-goal"
-                  value={goal}
-                  onChange={(e) => setGoal(e.target.value)}
-                  className="w-full bg-[#f7f7f7] border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#555]"
-                >
-                  <option value="leads">Leads</option>
-                  <option value="awareness">Awareness</option>
-                  <option value="product_info">Product Info</option>
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="single-competitors" className="text-[12px] text-[#777] uppercase tracking-wider">
-                  Competitors ({numCompetitors})
-                </label>
-                <input
-                  id="single-competitors"
-                  type="range"
-                  min={3}
-                  max={20}
-                  value={numCompetitors}
-                  onChange={(e) => setNumCompetitors(Number(e.target.value))}
-                  className="w-full accent-[#1a1a1a]"
-                />
-              </div>
-            </div>
-          )}
-
-          {message && (
-            <p className={`text-[13px] ${message.startsWith("Error") ? "text-red-600" : "text-[#666]"}`}>
-              {message}
-            </p>
-          )}
-        </form>
-      </section>
-
-      <section className="border border-[#e8e8e8] rounded-2xl p-6 bg-white">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div>
-            <h2 className="text-[16px] font-semibold text-[#1a1a1a]">History</h2>
-            <p className="text-[12px] text-[#888] mt-1">
-              Scan creates the baseline. Optimize generates the HTML output.
-            </p>
-          </div>
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="bg-[#f7f7f7] border border-[#e0e0e0] rounded px-2 py-1.5 text-[12px] text-[#666]"
-          >
-            <option value="">All statuses</option>
-            <option value="done">Done</option>
-            <option value="running">Running</option>
-            <option value="failed">Failed</option>
-          </select>
-        </div>
-
-        {historyMessage && (
-          <p className={`text-[12px] mb-3 ${historyMessage.startsWith("Error") ? "text-red-600" : "text-[#666]"}`}>
-            {historyMessage}
-          </p>
-        )}
-        <TableResults
-          items={history}
-          onOpenEditor={handleOpenEditor}
-          onOpenDetails={setDetailsJobId}
-          onOptimizeJob={handleOptimizeFromHistory}
-          optimizingJobId={optimizingJobId}
+        <ScanForm
+          url={url}
+          keyword={keyword}
+          showSettings={showSettings}
+          goal={goal}
+          numCompetitors={numCompetitors}
+          loading={loading}
+          message={message}
+          onSubmit={handleSubmit}
+          onUrlChange={setUrl}
+          onKeywordChange={setKeyword}
+          onToggleSettings={() => setShowSettings((value) => !value)}
+          onGoalChange={(value) => setGoal(toGoal(value, goal))}
+          onNumCompetitorsChange={(value) =>
+            setNumCompetitors(toNumberOrFallback(value, numCompetitors))
+          }
         />
       </section>
 
+      <HistorySection
+        filterStatus={filterStatus}
+        historyMessage={historyMessage}
+        items={history}
+        optimizingJobId={optimizingJobId}
+        onFilterStatusChange={setFilterStatus}
+        onOpenEditor={handleOpenEditor}
+        onOpenDetails={handleOpenDetails}
+        onOptimizeJob={handleOptimizeFromHistory}
+      />
+
       <JobDetailPanel
         item={selectedDetailsJob}
-        onClose={() => setDetailsJobId(null)}
+        loadingAudit={detailsLoading}
+        onClose={handleCloseDetails}
         onRetryScan={handleRetryScanFromHistory}
         onOptimizeJob={handleOptimizeFromHistory}
         onOpenEditor={handleOpenEditor}

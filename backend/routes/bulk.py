@@ -8,9 +8,10 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
-from job_service import create_optimization_job
+from job_service import create_optimization_job, create_optimization_jobs_bulk
 from scrapling_core.url_policy import validate_target_url
 
 router = APIRouter()
@@ -130,16 +131,17 @@ def _xlsx_rows_minimal(content: bytes) -> list[tuple]:
 
 
 @router.post("/bulk/upload", response_model=BulkUploadResponse)
-async def bulk_upload(
-    request: Request,
-    filename: str = Query(default="upload.xlsx"),
-):
+async def bulk_upload(request: Request, filename: str = Query(default="upload.xlsx")):
+    content = await request.body()
+    return await run_in_threadpool(_process_bulk_upload, content, filename)
+
+
+def _process_bulk_upload(content: bytes, filename: str) -> BulkUploadResponse:
     safe_name = (filename or "").lower()
     if not safe_name.endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Only .xlsx files are supported.")
 
     try:
-        content = await request.body()
         if not content:
             raise ValueError("Upload payload is empty.")
         try:
@@ -167,10 +169,11 @@ async def bulk_upload(
 
     submitted_ids: list[int] = []
     rejected: list[RejectedRow] = []
-    processed = 0
+    accepted_count = 0
+    accepted_rows: list[tuple[int, dict]] = []
 
     for row_number, row in enumerate(rows, start=2):
-        if processed >= _MAX_ROWS:
+        if accepted_count >= _MAX_ROWS:
             rejected.append(
                 RejectedRow(
                     row=row_number,
@@ -232,25 +235,49 @@ async def bulk_upload(
             rejected.append(RejectedRow(row=row_number, reason=str(exc), raw_url=url))
             continue
 
+        accepted_rows.append(
+            (
+                row_number,
+                {
+                    "url": url,
+                    "keyword": keyword,
+                    "goal": goal,
+                    "num_competitors": num_competitors,
+                    "pipeline_mode": "full",
+                    "schedule_id": None,
+                },
+            )
+        )
+        accepted_count += 1
+
+    if accepted_rows:
         try:
-            job = create_optimization_job(
-                url=url,
-                keyword=keyword,
-                goal=goal,
-                num_competitors=num_competitors,
+            created_ids = create_optimization_jobs_bulk(
+                jobs=[payload for _, payload in accepted_rows],
                 pipeline_mode="full",
-                schedule_id=None,
             )
-            submitted_ids.append(job.id)
-            processed += 1
-        except Exception as exc:
-            rejected.append(
-                RejectedRow(
-                    row=row_number,
-                    reason=f"Failed to enqueue job: {exc}",
-                    raw_url=url,
-                )
-            )
+            submitted_ids.extend(created_ids)
+        except Exception:
+            # Fallback to per-row inserts to preserve partial progress.
+            for row_number, payload in accepted_rows:
+                try:
+                    job = create_optimization_job(
+                        url=payload["url"],
+                        keyword=payload["keyword"],
+                        goal=payload["goal"],
+                        num_competitors=payload["num_competitors"],
+                        pipeline_mode="full",
+                        schedule_id=None,
+                    )
+                    submitted_ids.append(job.id)
+                except Exception as exc:
+                    rejected.append(
+                        RejectedRow(
+                            row=row_number,
+                            reason=f"Failed to enqueue job: {exc}",
+                            raw_url=payload["url"],
+                        )
+                    )
 
     return BulkUploadResponse(
         submitted_count=len(submitted_ids),

@@ -16,10 +16,9 @@ from pydantic import BaseModel, Field
 from database import SessionLocal, engine
 from job_service import (
     count_active_workers,
-    count_due_queue_backlog,
-    count_queue_backlog,
-    count_running_jobs,
     count_stale_running_jobs,
+    get_queue_metrics,
+    is_worker_heartbeat_enabled,
 )
 from scrapling_core.models import OptimizationJob
 
@@ -81,6 +80,7 @@ class ReliabilitySummary(BaseModel):
     running_jobs: int
     stale_running_jobs: int
     active_workers: int
+    heartbeat_enabled: bool
     database_backend: str
 
     submitted_jobs: int
@@ -165,9 +165,18 @@ def reliability_summary(
         if host:
             failure_domain_counter[host] += 1
 
-    active_workers = count_active_workers(stale_after_seconds=worker_stale_seconds)
-    due_backlog = count_due_queue_backlog()
-    stale_running_jobs = count_stale_running_jobs(max_age_seconds=stale_running_seconds)
+    queue_metrics = get_queue_metrics()
+    heartbeat_enabled = is_worker_heartbeat_enabled()
+    active_workers = (
+        count_active_workers(stale_after_seconds=worker_stale_seconds)
+        if heartbeat_enabled
+        else 0
+    )
+    due_backlog = queue_metrics.due_backlog
+    stale_running_jobs = count_stale_running_jobs(
+        max_age_seconds=stale_running_seconds,
+        worker_stale_seconds=worker_stale_seconds,
+    )
     alerts: list[str] = []
     if scrape_success_rate < scrape_target:
         alerts.append(
@@ -181,9 +190,9 @@ def reliability_summary(
         alerts.append(
             f"P95 completion {p95_minutes:.2f}m is above target {p95_target:.2f}m"
         )
-    if active_workers <= 0:
+    if heartbeat_enabled and active_workers <= 0:
         alerts.append("No active worker heartbeat detected")
-    if due_backlog > 0 and active_workers <= 0:
+    if heartbeat_enabled and due_backlog > 0 and active_workers <= 0:
         alerts.append("Due backlog exists but no active worker is available")
     if stale_running_jobs > 0:
         alerts.append(f"{stale_running_jobs} stale running jobs detected")
@@ -192,11 +201,12 @@ def reliability_summary(
         window_days=window_days,
         since=since.isoformat(),
         generated_at=now.isoformat(),
-        queue_backlog=count_queue_backlog(),
+        queue_backlog=queue_metrics.queue_backlog,
         due_backlog=due_backlog,
-        running_jobs=count_running_jobs(),
+        running_jobs=queue_metrics.running_jobs,
         stale_running_jobs=stale_running_jobs,
         active_workers=active_workers,
+        heartbeat_enabled=heartbeat_enabled,
         database_backend=engine.dialect.name,
         submitted_jobs=submitted_jobs,
         completed_jobs=completed_jobs,

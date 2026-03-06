@@ -4,8 +4,11 @@ Fetches and extracts structured content from any URL.
 """
 from __future__ import annotations
 
+import os
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
+from html import unescape
+from threading import BoundedSemaphore
 from time import sleep
 from typing import Optional
 
@@ -18,6 +21,76 @@ _NOISE_SELECTORS = [
     ".cookie-banner", ".ad", ".advertisement",
     ".sidebar", ".menu",
 ]
+
+_SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style|noscript|iframe)\b[^>]*>.*?</\1>")
+_BLOCK_NOISE_RE = re.compile(r"(?is)<(nav|header|footer|aside)\b[^>]*>.*?</\1>")
+_TAG_RE = re.compile(r"(?is)<[^>]+>")
+_TITLE_RE = re.compile(r"(?is)<title\b[^>]*>(.*?)</title>")
+_HEADING_RE = re.compile(r"(?is)<(h[1-3])\b[^>]*>(.*?)</\1>")
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    try:
+        value = int(raw) if raw is not None else default
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    raw = os.getenv(name)
+    try:
+        value = float(raw) if raw is not None else default
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+_STEALTHY_FETCH_MAX_CONCURRENCY = max(
+    1,
+    min(8, _env_int("STEALTHY_FETCH_MAX_CONCURRENCY", 2, 1, 8)),
+)
+_STEALTHY_FETCH_SEMAPHORE = BoundedSemaphore(_STEALTHY_FETCH_MAX_CONCURRENCY)
+_COMPETITOR_SCRAPE_MAX_WORKERS = _env_int("COMPETITOR_SCRAPE_MAX_WORKERS", 4, 1, 12)
+_CASCADE_FAIL_MIN_SAMPLES = _env_int("SCRAPE_CASCADE_FAIL_MIN_SAMPLES", 4, 2, 20)
+_CASCADE_FAIL_RATIO = _env_float("SCRAPE_CASCADE_FAIL_RATIO", 0.9, 0.5, 1.0)
+_MIN_FALLBACK_WORDS = _env_int("SCRAPE_MIN_WORDS_FOR_HTML_FALLBACK", 60, 5, 1000)
+
+
+def _normalize_space(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip()
+
+
+def _extract_title_from_html(html: str) -> str:
+    if not html:
+        return ""
+    match = _TITLE_RE.search(html)
+    if not match:
+        return ""
+    raw_title = _TAG_RE.sub(" ", match.group(1))
+    return _normalize_space(unescape(raw_title))
+
+
+def _extract_headings_from_html(html: str) -> list[dict]:
+    if not html:
+        return []
+
+    rows: list[dict] = []
+    for tag, raw in _HEADING_RE.findall(html):
+        text = _normalize_space(unescape(_TAG_RE.sub(" ", raw)))
+        if text:
+            rows.append({"tag": tag.lower(), "text": text})
+    return rows
+
+
+def _extract_body_text_from_html(html: str) -> str:
+    if not html:
+        return ""
+    cleaned = _SCRIPT_STYLE_RE.sub(" ", html)
+    cleaned = _BLOCK_NOISE_RE.sub(" ", cleaned)
+    text = _TAG_RE.sub(" ", cleaned)
+    return _normalize_space(unescape(text))
 
 
 def _classify_fetch_error(error: Exception) -> str:
@@ -39,16 +112,31 @@ def _classify_fetch_error(error: Exception) -> str:
 
 def _fetch_with_retries(url: str, max_attempts: int = 3):
     last_error: Optional[Exception] = None
+    fallback_fetcher = Fetcher()
+    stealthy_attempted = False
+
     for attempt in range(1, max_attempts + 1):
         try:
-            return StealthyFetcher().fetch(url), attempt
-        except Exception as stealth_error:
-            last_error = stealth_error
-
-        try:
-            return Fetcher().get(url, stealthy_headers=True, retries=1, timeout=20), attempt
+            # Prefer lightweight HTTP fetch first to avoid launching browser engines unnecessarily.
+            return fallback_fetcher.get(url, stealthy_headers=True, retries=1, timeout=20), attempt
         except Exception as fallback_error:
             last_error = fallback_error
+            code = _classify_fetch_error(fallback_error)
+
+        # Only escalate to browser-backed fetches for anti-bot/time-sensitive failures.
+        if code in {"blocked", "timeout"} and not stealthy_attempted:
+            stealthy_attempted = True
+            try:
+                with _STEALTHY_FETCH_SEMAPHORE:
+                    return StealthyFetcher.fetch(
+                        url,
+                        disable_resources=True,
+                        block_images=True,
+                        wait=0,
+                        timeout=30000,
+                    ), attempt
+            except Exception as stealth_error:
+                last_error = stealth_error
 
         if attempt < max_attempts:
             sleep(min(1.5 * attempt, 4.0))
@@ -124,22 +212,59 @@ def scrape_page(url: str, max_attempts: int = 3) -> dict:
         # Fallback when html_content is not available.
         result["raw_html"] = page.text or ""
 
-    result["word_count"] = len(result["body_text"].split())
+    if not result["title"] and result["raw_html"]:
+        result["title"] = _extract_title_from_html(result["raw_html"])
+
+    if not result["headings"] and result["raw_html"]:
+        result["headings"] = _extract_headings_from_html(result["raw_html"])
+
+    current_words = len(result["body_text"].split())
+    if result["raw_html"] and current_words < _MIN_FALLBACK_WORDS:
+        fallback_body = _extract_body_text_from_html(result["raw_html"])
+        fallback_words = len(fallback_body.split())
+        if fallback_words > current_words:
+            result["body_text"] = fallback_body
+            current_words = fallback_words
+
+    result["word_count"] = current_words
     return result
 
 
 def scrape_pages_parallel(urls: list[str], max_workers: int = 4, max_attempts: int = 2) -> list[dict]:
     """Scrape multiple pages concurrently."""
+    if not urls:
+        return []
+
+    worker_count = min(max(1, max_workers), _COMPETITOR_SCRAPE_MAX_WORKERS, len(urls))
+    transient_errors = {"blocked", "timeout", "network_error", "dns_error", "tls_error"}
+
     results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_to_url = {
             executor.submit(scrape_page, url, max_attempts=max_attempts): url for url in urls
         }
+        total_seen = 0
+        failed_seen = 0
+        cascade_triggered = False
+
         for future in as_completed(future_to_url):
             url = future_to_url[future]
             try:
-                results.append(future.result())
+                page = future.result()
+                results.append(page)
+                total_seen += 1
+                if page.get("error") and page.get("error_code") in transient_errors:
+                    failed_seen += 1
             except Exception as exc:
+                total_seen += 1
+                if isinstance(exc, CancelledError):
+                    error_code = "cancelled"
+                    error_message = "Scrape task cancelled due to high failure ratio."
+                else:
+                    error_code = _classify_fetch_error(exc)
+                    error_message = str(exc)
+                    if error_code in transient_errors:
+                        failed_seen += 1
                 results.append(
                     {
                         "url": url,
@@ -150,8 +275,19 @@ def scrape_pages_parallel(urls: list[str], max_workers: int = 4, max_attempts: i
                         "word_count": 0,
                         "status_code": None,
                         "attempts": max_attempts,
-                        "error": str(exc),
-                        "error_code": _classify_fetch_error(exc),
+                        "error": error_message,
+                        "error_code": error_code,
                     }
                 )
+
+            if (
+                not cascade_triggered
+                and total_seen >= _CASCADE_FAIL_MIN_SAMPLES
+                and (failed_seen / max(total_seen, 1)) >= _CASCADE_FAIL_RATIO
+            ):
+                cascade_triggered = True
+                for pending_future in future_to_url:
+                    if not pending_future.done():
+                        pending_future.cancel()
+
     return results

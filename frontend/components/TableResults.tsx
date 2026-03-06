@@ -1,8 +1,11 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { HistoryItem, AuditResult } from "@/types";
-import { getExportUrl, getSourceExportUrl } from "@/lib/apiClient";
+import { getExportUrl, getHistoryItem, getSourceExportUrl } from "@/lib/apiClient";
+import { parseAuditResult } from "@/lib/auditResult";
+import { useClickOutside } from "@/hooks/useClickOutside";
+import { formatDateWithTimezone } from "@/lib/dateTime";
 
 interface Props {
   items: HistoryItem[];
@@ -15,6 +18,9 @@ interface Props {
 const statusColor: Record<string, string> = {
   pending: "text-[#aaa]", running: "text-[#1a1a1a]", done: "text-[#888]", failed: "text-red-500",
 };
+const HISTORY_VIRTUALIZATION_THRESHOLD = 200;
+const HISTORY_ROW_HEIGHT_PX = 49;
+const HISTORY_ROW_OVERSCAN = 8;
 
 function Label({ children }: { children: React.ReactNode }) {
   return <p className="text-[11px] text-[#aaa] uppercase tracking-wider mb-2">{children}</p>;
@@ -57,26 +63,10 @@ function PackDetails({
         : "View Details";
   const primaryDisabled = primaryAction === "optimize" ? isBusy || isOptimizing : false;
 
-  useEffect(() => {
-    if (!showMoreActions) return;
-
-    function onPointerDown(event: MouseEvent) {
-      if (!moreActionsRef.current) return;
-      if (moreActionsRef.current.contains(event.target as Node)) return;
-      setShowMoreActions(false);
-    }
-
-    function onEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setShowMoreActions(false);
-    }
-
-    window.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("keydown", onEscape);
-    return () => {
-      window.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("keydown", onEscape);
-    };
-  }, [showMoreActions]);
+  useClickOutside(moreActionsRef, () => setShowMoreActions(false), {
+    enabled: showMoreActions,
+    closeOnEscape: true,
+  });
 
   function runPrimaryAction(event: React.MouseEvent) {
     event.stopPropagation();
@@ -335,7 +325,7 @@ function PackDetails({
       )}
 
       {/* Strengths + Gaps */}
-      {(audit.strengths?.length || audit.content_gaps?.length) && (
+      {((audit.strengths?.length ?? 0) > 0 || (audit.content_gaps?.length ?? 0) > 0) && (
         <div className="grid grid-cols-2 gap-8">
           {audit.strengths && audit.strengths.length > 0 && (
             <div>
@@ -355,13 +345,13 @@ function PackDetails({
       {/* Change summary */}
       {audit.change_summary && (
         <div className="grid grid-cols-2 gap-8">
-          {audit.change_summary.keep?.length > 0 && (
+          {Array.isArray(audit.change_summary?.keep) && audit.change_summary.keep.length > 0 && (
             <div>
               <Label>Keep</Label>
               {audit.change_summary.keep.map((k, i) => <p key={i} className="text-[12px] text-[#888] py-0.5">{k}</p>)}
             </div>
           )}
-          {audit.change_summary.change?.length > 0 && (
+          {Array.isArray(audit.change_summary?.change) && audit.change_summary.change.length > 0 && (
             <div>
               <Label>Change</Label>
               {audit.change_summary.change.map((c, i) => <p key={i} className="text-[12px] text-[#555] py-0.5">{c}</p>)}
@@ -391,6 +381,61 @@ function PackDetails({
   );
 }
 
+function AuditFallbackDetails({
+  item,
+  onOpenEditor,
+  onOpenDetails,
+  onOptimizeJob,
+  optimizingJobId,
+}: {
+  item: HistoryItem;
+  onOpenEditor: (jobId: number) => void;
+  onOpenDetails: (jobId: number) => void;
+  onOptimizeJob: (jobId: number) => void;
+  optimizingJobId: number | null;
+}) {
+  const canOpenEditor = item.has_source_html || item.has_export;
+  const canOptimize = item.can_optimize;
+  const isBusy = item.status === "pending" || item.status === "running";
+  const isOptimizing = optimizingJobId === item.id;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-[13px] text-[#666]">
+        Audit details are unavailable for this run. You can still open details, open the editor, or re-run optimize.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onOpenDetails(item.id)}
+          className="border border-[#ddd] text-[#444] text-[13px] px-3 py-2 rounded-lg hover:border-[#bbb]"
+        >
+          View Details
+        </button>
+        {canOpenEditor && (
+          <button
+            type="button"
+            onClick={() => onOpenEditor(item.id)}
+            className="border border-[#ddd] text-[#444] text-[13px] px-3 py-2 rounded-lg hover:border-[#bbb]"
+          >
+            Open Editor
+          </button>
+        )}
+        {canOptimize && (
+          <button
+            type="button"
+            onClick={() => onOptimizeJob(item.id)}
+            disabled={isBusy || isOptimizing}
+            className="bg-[#1a1a1a] text-white text-[13px] px-4 py-2 rounded-lg hover:bg-[#333] disabled:opacity-40"
+          >
+            {isOptimizing ? "Optimizing..." : item.has_export ? "Refresh Optimization" : "Optimize"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function TableResults({
   items,
   onOpenEditor,
@@ -399,13 +444,123 @@ export function TableResults({
   optimizingJobId,
 }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(620);
+  const [hydratedItemsById, setHydratedItemsById] = useState<Record<number, HistoryItem>>({});
+  const [hydratingItemId, setHydratingItemId] = useState<number | null>(null);
+  const hydrateRequestIdRef = useRef(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const shouldVirtualize = items.length > HISTORY_VIRTUALIZATION_THRESHOLD && expandedId === null;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const updateViewport = () => {
+      setViewportHeight(container.clientHeight);
+    };
+    updateViewport();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateViewport);
+      return () => window.removeEventListener("resize", updateViewport);
+    }
+
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  const virtualWindow = useMemo(() => {
+    if (!shouldVirtualize) {
+      return {
+        startIndex: 0,
+        endIndex: items.length,
+        topSpacerPx: 0,
+        bottomSpacerPx: 0,
+      };
+    }
+
+    const startIndex = Math.max(
+      0,
+      Math.floor(scrollTop / HISTORY_ROW_HEIGHT_PX) - HISTORY_ROW_OVERSCAN,
+    );
+    const endIndex = Math.min(
+      items.length,
+      Math.ceil((scrollTop + viewportHeight) / HISTORY_ROW_HEIGHT_PX) + HISTORY_ROW_OVERSCAN,
+    );
+    const topSpacerPx = startIndex * HISTORY_ROW_HEIGHT_PX;
+    const bottomSpacerPx = Math.max(0, (items.length - endIndex) * HISTORY_ROW_HEIGHT_PX);
+
+    return {
+      startIndex,
+      endIndex,
+      topSpacerPx,
+      bottomSpacerPx,
+    };
+  }, [items.length, scrollTop, shouldVirtualize, viewportHeight]);
+  const visibleItems = useMemo(
+    () => items.slice(virtualWindow.startIndex, virtualWindow.endIndex),
+    [items, virtualWindow.endIndex, virtualWindow.startIndex],
+  );
+
+  const handleRowToggle = (item: HistoryItem) => {
+    const nextExpandedId = expandedId === item.id ? null : item.id;
+    setExpandedId(nextExpandedId);
+    if (!nextExpandedId) {
+      return;
+    }
+
+    const hydrated = hydratedItemsById[item.id];
+    if (hydrated?.audit_result || item.audit_result) {
+      return;
+    }
+
+    const requestId = hydrateRequestIdRef.current + 1;
+    hydrateRequestIdRef.current = requestId;
+    setHydratingItemId(item.id);
+
+    void getHistoryItem(item.id)
+      .then((fullItem) => {
+        if (hydrateRequestIdRef.current !== requestId) {
+          return;
+        }
+        setHydratedItemsById((prev) => ({
+          ...prev,
+          [item.id]: fullItem,
+        }));
+      })
+      .catch(() => {
+        // Swallow hydration errors and keep fallback UI for this row.
+      })
+      .finally(() => {
+        if (hydrateRequestIdRef.current !== requestId) {
+          return;
+        }
+        setHydratingItemId((current) => (current === item.id ? null : current));
+      });
+  };
 
   if (items.length === 0) {
     return <p className="text-[13px] text-[#bbb] py-8 text-center">No jobs yet</p>;
   }
 
   return (
-    <div className="border border-[#e8e8e8] rounded-xl overflow-hidden">
+    <div
+      ref={containerRef}
+      className="border border-[#e8e8e8] rounded-xl overflow-auto max-h-[620px]"
+      onScroll={(event) => {
+        if (!shouldVirtualize) {
+          return;
+        }
+        const nextTop = event.currentTarget.scrollTop;
+        if (nextTop !== scrollTop) {
+          setScrollTop(nextTop);
+        }
+      }}
+    >
       <table className="w-full">
         <thead>
           <tr className="border-b border-[#e8e8e8] bg-[#f8f8f8]">
@@ -417,45 +572,68 @@ export function TableResults({
           </tr>
         </thead>
         <tbody>
-          {items.map((item) => {
-            let audit: AuditResult | null = null;
-            if (item.audit_result) { try { audit = JSON.parse(item.audit_result); } catch {} }
+          {shouldVirtualize && virtualWindow.topSpacerPx > 0 && (
+            <tr>
+              <td colSpan={5} style={{ height: `${virtualWindow.topSpacerPx}px`, padding: 0 }} />
+            </tr>
+          )}
+          {visibleItems.map((item) => {
+            const hydratedItem = hydratedItemsById[item.id];
+            const displayItem = hydratedItem ?? item;
+            const audit: AuditResult | null = parseAuditResult(displayItem.audit_result);
 
             return (
-              <Fragment key={item.id}>
-                <tr key={item.id}
-                  onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
+              <React.Fragment key={displayItem.id}>
+                <tr
+                  onClick={() => handleRowToggle(item)}
                   className="border-b border-[#f0f0f0] hover:bg-[#f8f8f8] cursor-pointer transition-colors">
-                  <td className="px-4 py-3 text-[13px] text-[#1a1a1a] truncate max-w-[240px]">{item.url}</td>
-                  <td className="px-4 py-3 text-[13px] text-[#888] capitalize">{item.page_type || "\u2014"}</td>
+                  <td className="px-4 py-3 text-[13px] text-[#1a1a1a] truncate max-w-[240px]">{displayItem.url}</td>
+                  <td className="px-4 py-3 text-[13px] text-[#888] capitalize">{displayItem.page_type || "\u2014"}</td>
                   <td className="px-4 py-3 text-[13px] text-[#1a1a1a] font-medium tabular-nums">
                     {audit && !audit.parse_error ? audit.overall_score : "\u2014"}
                   </td>
-                  <td className={`px-4 py-3 text-[13px] ${statusColor[item.status] || "text-[#aaa]"}`}>
-                    {item.status}
+                  <td className={`px-4 py-3 text-[13px] ${statusColor[displayItem.status] || "text-[#aaa]"}`}>
+                    {displayItem.status}
                   </td>
                   <td className="px-4 py-3 text-[13px] text-[#aaa] tabular-nums">
-                    {new Date(item.created_at).toLocaleDateString()}
+                    {formatDateWithTimezone(displayItem.created_at)}
                   </td>
                 </tr>
-                {expandedId === item.id && audit && (
-                  <tr key={`${item.id}-pack`}>
+                {expandedId === item.id && (
+                  <tr>
                     <td colSpan={5} className="px-6 py-8 bg-[#f8f8f8] border-b border-[#f0f0f0]">
-                      <PackDetails
-                        audit={audit}
-                        jobId={item.id}
-                        item={item}
-                        onOpenEditor={onOpenEditor}
-                        onOpenDetails={onOpenDetails}
-                        onOptimizeJob={onOptimizeJob}
-                        optimizingJobId={optimizingJobId}
-                      />
+                      {hydratingItemId === item.id && !displayItem.audit_result ? (
+                        <p className="text-[13px] text-[#777]">Loading audit details...</p>
+                      ) : audit ? (
+                        <PackDetails
+                          audit={audit}
+                          jobId={displayItem.id}
+                          item={displayItem}
+                          onOpenEditor={onOpenEditor}
+                          onOpenDetails={onOpenDetails}
+                          onOptimizeJob={onOptimizeJob}
+                          optimizingJobId={optimizingJobId}
+                        />
+                      ) : (
+                        <AuditFallbackDetails
+                          item={displayItem}
+                          onOpenEditor={onOpenEditor}
+                          onOpenDetails={onOpenDetails}
+                          onOptimizeJob={onOptimizeJob}
+                          optimizingJobId={optimizingJobId}
+                        />
+                      )}
                     </td>
                   </tr>
                 )}
-              </Fragment>
+              </React.Fragment>
             );
           })}
+          {shouldVirtualize && virtualWindow.bottomSpacerPx > 0 && (
+            <tr>
+              <td colSpan={5} style={{ height: `${virtualWindow.bottomSpacerPx}px`, padding: 0 }} />
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

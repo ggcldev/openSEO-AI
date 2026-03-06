@@ -5,6 +5,8 @@ import json
 
 from langchain_core.prompts import PromptTemplate
 
+from scrapling_core.llm_runtime import invoke_chain_with_retry
+
 
 INTENT_PROMPT = PromptTemplate(
     input_variables=["url", "title", "headings", "body_snippet"],
@@ -45,14 +47,26 @@ def detect_intent(llm, page_data: dict) -> dict:
     body_snippet = body[:1500] if body else "(empty)"
 
     chain = INTENT_PROMPT | llm
-    result = chain.invoke({
-        "url": page_data.get("url", ""),
-        "title": page_data.get("title", "(no title)"),
-        "headings": headings_str,
-        "body_snippet": body_snippet,
-    })
-
-    raw = result.content.strip()
+    try:
+        raw = invoke_chain_with_retry(
+            chain,
+            {
+                "url": page_data.get("url", ""),
+                "title": page_data.get("title", "(no title)"),
+                "headings": headings_str,
+                "body_snippet": body_snippet,
+            },
+            stage="intent_detection",
+        ).strip()
+    except Exception:
+        return {
+            "intent": "informational",
+            "page_type": "service",
+            "industry": "",
+            "region": "global",
+            "language": "en",
+            "serp_query": "",
+        }
 
     try:
         clean = raw.lstrip("```json").lstrip("```").rstrip("```").strip()

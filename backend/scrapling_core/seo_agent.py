@@ -3,11 +3,28 @@ SEO Audit Agent — generates a full Optimization Pack
 tailored to page type, region, language, and goal.
 """
 import json
+from typing import Optional
 
 from langchain_core.prompts import PromptTemplate
 
+from scrapling_core.llm_runtime import invoke_chain_with_retry
+from scrapling_core.style_profile import format_style_profile
+
 AUDIT_PROMPT = PromptTemplate(
-    input_variables=["keyword", "page_type", "intent", "industry", "region", "language", "goal", "your_page", "serp_summary", "gaps"],
+    input_variables=[
+        "keyword",
+        "page_type",
+        "intent",
+        "industry",
+        "region",
+        "language",
+        "goal",
+        "your_page",
+        "serp_summary",
+        "gaps",
+        "style_profile",
+        "geo_aeo_baseline",
+    ],
     template="""You are an expert SEO on-page optimizer for Hitachi Energy.
 
 Target keyword: {keyword}
@@ -26,6 +43,12 @@ SERP TOP-10 COMPETITOR SUMMARY:
 
 COMPUTED GAPS:
 {gaps}
+
+STYLE PROFILE TO PRESERVE:
+{style_profile}
+
+GEO/AEO BASELINE SIGNALS:
+{geo_aeo_baseline}
 
 Generate a complete Optimization Pack. Return ONLY valid JSON:
 {{
@@ -76,6 +99,23 @@ Generate a complete Optimization Pack. Return ONLY valid JSON:
     "change": ["<what to change and why>"]
   }},
 
+  "style_guardrails": {{
+    "voice": "<voice label to preserve>",
+    "formality": "<formal|balanced|conversational>",
+    "do": ["<style behavior to preserve>"],
+    "avoid": ["<style drift to avoid>"]
+  }},
+
+  "geo_aeo": {{
+    "readiness_score": <int 0-100>,
+    "answer_blocks": [
+      {{"question": "<query-style question>", "answer": "<40-70 word concise answer>", "placement": "<section/heading target>"}}
+    ],
+    "priority_fixes": ["<AEO/GEO fix 1>", "<AEO/GEO fix 2>"],
+    "entity_expansions": ["<entity to add or clarify>"],
+    "schema_recommendations": ["<FAQPage|HowTo|Product|Service etc with rationale>"]
+  }},
+
   "checklist": [
     {{"task": "<specific edit to make>", "location": "<where on the page>", "priority": <1-8>}}
   ]
@@ -89,6 +129,8 @@ TEMPLATE BY PAGE TYPE:
 Generate 6-10 FAQs relevant to the page topic and intent.
 Generate 3 title options and 3 meta description options.
 Generate a complete headings outline following the template for this page type.
+For GEO/AEO, generate direct-answer blocks and query-style Q/A phrasing that can rank in AI/answer engines.
+Preserve the source voice; optimize in place rather than proposing a full rewrite.
 Checklist should have 5-8 specific, actionable edits.
 
 Return ONLY the JSON. No markdown fences, no explanation."""
@@ -101,10 +143,36 @@ def _truncate(text: str, max_chars: int = 8000) -> str:
     return text[:max_chars] + "\n[... truncated ...]"
 
 
+def _build_geo_aeo_baseline(your_page: dict, competitor_pages: list[dict], gaps: dict) -> dict:
+    headings = your_page.get("headings", []) or []
+    question_headings = [
+        h.get("text", "")
+        for h in headings
+        if isinstance(h, dict) and "?" in str(h.get("text", ""))
+    ]
+    question_ratio = round(len(question_headings) / max(len(headings), 1), 2)
+    faq_guess = len(question_headings)
+    competitor_entities: set[str] = set()
+    for page in competitor_pages:
+        for entity in page.get("entities", []) or []:
+            if isinstance(entity, str) and entity.strip():
+                competitor_entities.add(entity.strip())
+
+    return {
+        "question_heading_ratio": question_ratio,
+        "existing_question_heading_count": faq_guess,
+        "word_count": your_page.get("word_count", 0),
+        "missing_entities_count": len((gaps or {}).get("missing_entities", []) or []),
+        "top_missing_entities": ((gaps or {}).get("missing_entities", []) or [])[:10],
+        "top_competitor_entities": sorted(competitor_entities)[:12],
+    }
+
+
 def run_seo_audit(
     llm, keyword: str, your_page: dict, competitor_pages: list[dict],
     gaps: dict, intent_data: dict = None,
     region: str = "global", language: str = "en", goal: str = "leads",
+    style_profile: Optional[dict] = None,
 ) -> dict:
     intent_data = intent_data or {}
     intent = intent_data.get("intent", "informational")
@@ -133,22 +201,27 @@ def run_seo_audit(
         f"Top keywords: {', '.join(your_page.get('top_keywords', []))}\n"
         f"Entities: {', '.join(your_page.get('entities', [])[:15])}"
     )
+    geo_aeo_baseline = _build_geo_aeo_baseline(your_page, competitor_pages, gaps)
 
     chain = AUDIT_PROMPT | llm
-    result = chain.invoke({
-        "keyword": keyword,
-        "page_type": page_type,
-        "intent": intent,
-        "industry": industry,
-        "region": region,
-        "language": language,
-        "goal": goal,
-        "your_page": _truncate(your_page_str, 3000),
-        "serp_summary": _truncate(serp_summary, 2000),
-        "gaps": _truncate(json.dumps(gaps, indent=2), 1500),
-    })
-
-    raw = result.content
+    raw = invoke_chain_with_retry(
+        chain,
+        {
+            "keyword": keyword,
+            "page_type": page_type,
+            "intent": intent,
+            "industry": industry,
+            "region": region,
+            "language": language,
+            "goal": goal,
+            "your_page": _truncate(your_page_str, 3000),
+            "serp_summary": _truncate(serp_summary, 2000),
+            "gaps": _truncate(json.dumps(gaps, indent=2), 1500),
+            "style_profile": _truncate(format_style_profile(style_profile), 1500),
+            "geo_aeo_baseline": _truncate(json.dumps(geo_aeo_baseline, indent=2), 1200),
+        },
+        stage="seo_audit",
+    )
     try:
         clean = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
         return json.loads(clean)
